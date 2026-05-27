@@ -105,6 +105,7 @@
     <div class="topbar-right">
       <span id="cloudSyncStatus" class="cloud-sync-status" title=""></span>
       <span class="topbar-user" id="topbarUser"></span>
+      <button class="topbar-logout" onclick="logout()" title="Cerrar sesión">⟶</button>
     </div>
   </div>
 
@@ -176,7 +177,7 @@
     <section id="page-products" class="page">
       <div class="page-header">
         <h1 class="page-title">Productos</h1>
-        <button class="btn-primary" onclick="openModal('productModal')">+ Nuevo Producto</button>
+        <button class="btn-primary" onclick="openProductModal()">+ Nuevo Producto</button>
       </div>
 
       <div class="filter-bar">
@@ -422,7 +423,7 @@
 <!-- ═══════════════════════ MODALS ═══════════════════════ -->
 
 <!-- PRODUCT MODAL -->
-<div id="productModal" class="modal-overlay hidden" onclick="closeModalOutside(event,'productModal')">
+<div id="productModal" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
       <h2 id="productModalTitle">Nuevo Producto</h2>
@@ -481,7 +482,7 @@
 </div>
 
 <!-- CLIENT MODAL -->
-<div id="clientModal" class="modal-overlay hidden" onclick="closeModalOutside(event,'clientModal')">
+<div id="clientModal" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
       <h2 id="clientModalTitle">Nuevo Cliente</h2>

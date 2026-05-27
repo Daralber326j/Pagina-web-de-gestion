@@ -224,9 +224,7 @@ async function handleLogin() {
 
   if (!user) { err.textContent = 'Usuario o contraseña incorrectos.'; return; }
 
-  if (document.getElementById('rememberMe').checked) {
-    localStorage.setItem('lum_session', JSON.stringify({ username: u, password: p }));
-  }
+  localStorage.setItem('lum_session', JSON.stringify({ username: u, password: p }));
   err.textContent = '';
   loginSuccess(user);
 }
@@ -458,16 +456,36 @@ function openProductModal(prodId = null) {
   openModal('productModal');
 }
 
+function _compressImage(dataUrl, maxPx, quality, cb) {
+  const img = new Image();
+  img.onload = () => {
+    const ratio = Math.min(1, maxPx / Math.max(img.width, img.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(img.width * ratio);
+    canvas.height = Math.round(img.height * ratio);
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    cb(canvas.toDataURL('image/jpeg', quality));
+  };
+  img.src = dataUrl;
+}
+
 function handleProductImage(e) {
   const file = e.target.files[0];
   if (!file) return;
+  if (file.size > 15 * 1024 * 1024) {
+    showToast('La imagen supera los 15 MB permitidos', true);
+    e.target.value = '';
+    return;
+  }
   const reader = new FileReader();
   reader.onload = ev => {
-    productImageB64 = ev.target.result;
-    const img = document.getElementById('prodImagePreview');
-    img.src = productImageB64;
-    img.classList.remove('hidden');
-    document.getElementById('prodImagePlaceholder').classList.add('hidden');
+    _compressImage(ev.target.result, 400, 0.75, compressed => {
+      productImageB64 = compressed;
+      const img = document.getElementById('prodImagePreview');
+      img.src = productImageB64;
+      img.classList.remove('hidden');
+      document.getElementById('prodImagePlaceholder').classList.add('hidden');
+    });
   };
   reader.readAsDataURL(file);
 }

@@ -421,6 +421,18 @@ input, select, textarea, button {
   letter-spacing: 0.04em;
 }
 
+.topbar-logout {
+  background: none;
+  border: none;
+  color: var(--text3);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  transition: color 0.2s;
+}
+.topbar-logout:hover { color: var(--text); }
+
 .cloud-sync-status {
   font-size: 0.85rem;
   color: var(--text3);
