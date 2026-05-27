@@ -421,6 +421,15 @@ input, select, textarea, button {
   letter-spacing: 0.04em;
 }
 
+.cloud-sync-status {
+  font-size: 0.85rem;
+  color: var(--text3);
+  cursor: default;
+  transition: color 0.3s;
+  min-width: 16px;
+  text-align: center;
+}
+
 /* ─── PAGES CONTAINER ─── */
 .pages-container {
   margin-left: var(--sidebar-w);

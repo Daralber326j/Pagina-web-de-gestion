@@ -6,10 +6,13 @@
 
 // ─── STORAGE HELPERS ───────────────────────
 const DB = {
-  get: (k) => { try { return JSON.parse(localStorage.getItem('lum_' + k)) || []; } catch { return []; } },
+  get:    (k)      => { try { return JSON.parse(localStorage.getItem('lum_' + k)) || []; } catch { return []; } },
   getObj: (k, def = {}) => { try { return JSON.parse(localStorage.getItem('lum_' + k)) || def; } catch { return def; } },
-  set: (k, v) => localStorage.setItem('lum_' + k, JSON.stringify(v)),
-  remove: (k) => localStorage.removeItem('lum_' + k),
+  set:    (k, v)   => {
+    localStorage.setItem('lum_' + k, JSON.stringify(v));
+    if (typeof CloudSync !== 'undefined') CloudSync.schedulePush();
+  },
+  remove: (k)      => localStorage.removeItem('lum_' + k),
 };
 
 // ─── STATE ─────────────────────────────────
@@ -160,11 +163,18 @@ function getCurrency() { return getConfig().currency || '$'; }
 function getLowStockThreshold() { return getConfig().lowStock || 5; }
 
 // ─── AUTH ───────────────────────────────────
-function checkAutoLogin() {
+async function checkAutoLogin() {
   const saved = localStorage.getItem('lum_session');
   if (saved) {
     try {
       const s = JSON.parse(saved);
+      // Pull latest data from cloud before resuming session
+      if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
+        const sub = document.querySelector('.login-logo p');
+        if (sub) sub.textContent = 'Sincronizando datos…';
+        await CloudSync.pull(s.username);
+        if (sub) sub.textContent = 'Sistema de Gestión';
+      }
       const users = DB.get('users');
       const u = users.find(u => u.username === s.username && u.password === s.password);
       if (u) { loginSuccess(u); return; }
@@ -180,6 +190,10 @@ function showLoginScreen() {
 
 function loginSuccess(user) {
   currentUser = user;
+  if (typeof CloudSync !== 'undefined') {
+    CloudSync.setUser(user.username);
+    CloudSync.showInitialStatus();
+  }
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('appMain').classList.remove('hidden');
   document.getElementById('topbarUser').textContent = user.username;
@@ -190,14 +204,23 @@ function loginSuccess(user) {
   refreshNavLabels();
 }
 
-function handleLogin() {
+async function handleLogin() {
   const u = document.getElementById('loginUser').value.trim();
   const p = document.getElementById('loginPass').value;
   const err = document.getElementById('loginError');
   if (!u || !p) { err.textContent = 'Completa todos los campos.'; return; }
 
+  const btn = document.querySelector('#loginForm .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Verificando…'; }
+
+  // Pull from cloud first so accounts created on other devices are recognized
+  if (typeof CloudSync !== 'undefined') await CloudSync.pull(u);
+
   const users = DB.get('users');
   const user = users.find(x => x.username === u && x.password === p);
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Entrar'; }
+
   if (!user) { err.textContent = 'Usuario o contraseña incorrectos.'; return; }
 
   if (document.getElementById('rememberMe').checked) {
@@ -207,7 +230,7 @@ function handleLogin() {
   loginSuccess(user);
 }
 
-function handleRegister() {
+async function handleRegister() {
   const u = document.getElementById('regUser').value.trim();
   const p = document.getElementById('regPass').value;
   const s = document.getElementById('regStore').value.trim();
@@ -216,10 +239,29 @@ function handleRegister() {
   if (!u || !p || !s) { err.textContent = 'Completa todos los campos.'; return; }
   if (p.length < 4) { err.textContent = 'La contraseña debe tener al menos 4 caracteres.'; return; }
 
-  const users = DB.get('users');
-  if (users.find(x => x.username === u)) { err.textContent = 'Ese usuario ya existe.'; return; }
+  const btn = document.querySelector('#registerForm .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creando cuenta…'; }
+
+  // Check cloud to avoid duplicate usernames across devices
+  if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
+    await CloudSync.pull(u);
+    const cloudUsers = DB.get('users');
+    if (cloudUsers.find(x => x.username === u)) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Registrarse'; }
+      err.textContent = 'Ese usuario ya existe.';
+      return;
+    }
+  } else {
+    const localUsers = DB.get('users');
+    if (localUsers.find(x => x.username === u)) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Registrarse'; }
+      err.textContent = 'Ese usuario ya existe.';
+      return;
+    }
+  }
 
   const newUser = { id: uid(), username: u, password: p, storeName: s };
+  const users = DB.get('users');
   users.push(newUser);
   DB.set('users', users);
 
@@ -227,12 +269,21 @@ function handleRegister() {
   cfg.storeName = s;
   DB.set('config', cfg);
 
+  // Push immediately so account is available from other devices
+  if (typeof CloudSync !== 'undefined') {
+    CloudSync.setUser(u);
+    await CloudSync.push();
+    CloudSync.clearUser();
+  }
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Registrarse'; }
   err.textContent = '';
   showToast('Cuenta creada. Inicia sesión ✓');
   toggleAuthMode('login');
 }
 
 function logout() {
+  if (typeof CloudSync !== 'undefined') CloudSync.clearUser();
   localStorage.removeItem('lum_session');
   currentUser = null;
   destroyCharts();
