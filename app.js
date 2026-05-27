@@ -178,17 +178,23 @@ async function checkAutoLogin() {
   if (saved) {
     try {
       const s = JSON.parse(saved);
-      // Admin session restore
+      // Admin session restore — pull latest data first
       if (s.isAdmin && s.username === ADMIN_CREDS.username && s.password === ADMIN_CREDS.password) {
         isAdminSession = true;
+        if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
+          const sub = document.querySelector('.login-logo p');
+          if (sub) sub.textContent = 'Sincronizando datos…';
+          await CloudSync.pull(ADMIN_CREDS.username);
+          if (sub) sub.textContent = 'Sistema de Gestión';
+        }
         loginSuccess({ username: s.username, storeName: 'Administrador', isAdmin: true });
         return;
       }
-      // Pull latest data from cloud before resuming session
+      // Pull latest data from cloud before resuming session (always from admin store)
       if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
         const sub = document.querySelector('.login-logo p');
         if (sub) sub.textContent = 'Sincronizando datos…';
-        await CloudSync.pull(s.username);
+        await CloudSync.pull(ADMIN_CREDS.username);
         if (sub) sub.textContent = 'Sistema de Gestión';
       }
       const users = DB.get('users');
@@ -209,11 +215,16 @@ async function handleAdminLogin() {
   }
   isAdminSession = true;
   localStorage.setItem('lum_session', JSON.stringify({ username: u, password: p, isAdmin: true }));
+  // Pull latest data (including any newly registered users) before entering admin panel
+  if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
+    await CloudSync.pull(ADMIN_CREDS.username);
+  }
   loginSuccess({ username: u, storeName: 'Administrador', isAdmin: true });
 }
 
 function showLoginScreen() {
-  const loginTheme = localStorage.getItem('lum_loginTheme') || 'black';
+  const cfg = DB.getObj('config', {});
+  const loginTheme = cfg.loginTheme || localStorage.getItem('lum_loginTheme') || 'black';
   document.documentElement.setAttribute('data-palette', loginTheme);
   document.body.removeAttribute('data-admin-mode');
   document.getElementById('loginScreen').classList.remove('hidden');
@@ -228,7 +239,8 @@ function loginSuccess(user) {
   } else {
     document.body.removeAttribute('data-admin-mode');
     if (typeof CloudSync !== 'undefined') {
-      CloudSync.setUser(user.username);
+      // Always sync to the admin's store document, not per-user documents
+      CloudSync.setUser(ADMIN_CREDS.username);
       CloudSync.showInitialStatus();
       CloudSync.push();
     }
@@ -253,8 +265,8 @@ async function handleLogin() {
   const btn = document.querySelector('#loginForm .btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = 'Verificando…'; }
 
-  // Pull from cloud first so accounts created on other devices are recognized
-  if (typeof CloudSync !== 'undefined') await CloudSync.pull(u);
+  // Pull from cloud first — always from the admin's store (single shared document)
+  if (typeof CloudSync !== 'undefined') await CloudSync.pull(ADMIN_CREDS.username);
 
   const users = DB.get('users');
   const user = users.find(x => x.username === u && x.password === p);
@@ -282,22 +294,15 @@ async function handleRegister() {
   const btn = document.querySelector('#registerForm .btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = 'Creando cuenta…'; }
 
-  // Check cloud to avoid duplicate usernames across devices
+  // Pull from the admin's shared store to check for duplicate usernames
   if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
-    await CloudSync.pull(u);
-    const cloudUsers = DB.get('users');
-    if (cloudUsers.find(x => x.username === u)) {
-      if (btn) { btn.disabled = false; btn.textContent = 'Registrarse'; }
-      err.textContent = 'Ese usuario ya existe.';
-      return;
-    }
-  } else {
-    const localUsers = DB.get('users');
-    if (localUsers.find(x => x.username === u)) {
-      if (btn) { btn.disabled = false; btn.textContent = 'Registrarse'; }
-      err.textContent = 'Ese usuario ya existe.';
-      return;
-    }
+    await CloudSync.pull(ADMIN_CREDS.username);
+  }
+  const existingUsers = DB.get('users');
+  if (existingUsers.find(x => x.username === u)) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Registrarse'; }
+    err.textContent = 'Ese usuario ya existe.';
+    return;
   }
 
   const newUser = { id: uid(), username: u, password: p, storeName: s };
@@ -305,14 +310,11 @@ async function handleRegister() {
   users.push(newUser);
   DB.set('users', users);
 
-  const cfg = getConfig();
-  cfg.storeName = s;
-  DB.set('config', cfg);
-
-  // Push a fresh empty store doc so this account is available from other devices
-  // without inheriting any existing data on this device
+  // Push new user into the admin's shared store so admin can see all accounts
   if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
-    await CloudSync.pushFresh(u, newUser, s);
+    CloudSync.setUser(ADMIN_CREDS.username);
+    await CloudSync.push();
+    CloudSync.clearUser();
   }
 
   if (btn) { btn.disabled = false; btn.textContent = 'Registrarse'; }
@@ -333,6 +335,9 @@ function logout() {
 
 function setLoginTheme(palette) {
   localStorage.setItem('lum_loginTheme', palette);
+  const cfg = getConfig();
+  cfg.loginTheme = palette;
+  DB.set('config', cfg); // syncs to cloud with schedulePush
   showToast('Tema de login actualizado ✓');
   renderAdminPage();
 }
@@ -390,7 +395,7 @@ function renderAdminPage() {
         </div>`;
       }).join('');
 
-  const currentLoginTheme = localStorage.getItem('lum_loginTheme') || 'black';
+  const currentLoginTheme = DB.getObj('config', {}).loginTheme || localStorage.getItem('lum_loginTheme') || 'black';
   const loginThemes = [
     { id: 'black',    label: 'Negra',      colors: ['#080808','#141414','#d4a97a','#f2f2f2'] },
     { id: 'cream',    label: 'Crema',      colors: ['#dfc898','#f0e0c0','#c47a3a','#2a1005'] },
@@ -408,7 +413,40 @@ function renderAdminPage() {
 
   document.getElementById('adminContent').innerHTML = `
     <div class="admin-section">
-      <h3 class="admin-section-title">Cuentas activas</h3>
+      <h3 class="admin-section-title">Crear cuenta de usuario</h3>
+      <div class="admin-create-form">
+        <div class="input-group" style="margin-bottom:0.5rem">
+          <label>Usuario</label>
+          <input type="text" id="newUserUsername" placeholder="Nombre de usuario" autocomplete="off" />
+        </div>
+        <div class="input-group" style="margin-bottom:0.5rem">
+          <label>Contraseña</label>
+          <input type="password" id="newUserPassword" placeholder="Contraseña" autocomplete="off" />
+        </div>
+        <div class="input-group" style="margin-bottom:0.75rem">
+          <label>Nombre de la tienda</label>
+          <input type="text" id="newUserStore" placeholder="Ej: LUMIÈRE" autocomplete="off" />
+        </div>
+        <p id="adminCreateError" style="color:#e07070;font-size:0.82rem;min-height:1.1em;margin-bottom:0.5rem"></p>
+        <button class="btn-primary" onclick="adminCreateUser()">Crear cuenta</button>
+      </div>
+    </div>
+    <div class="admin-section">
+      <h3 class="admin-section-title">Importar cuenta existente</h3>
+      <p class="admin-section-sub" style="margin:0 0 0.75rem;display:block;font-size:0.78rem;color:var(--text3)">Si alguien se registró antes de la última actualización, su cuenta quedó en un documento separado. Escribe su usuario para moverla aquí.</p>
+      <div style="display:flex;gap:0.5rem;align-items:flex-end;flex-wrap:wrap">
+        <div class="input-group" style="flex:1;min-width:160px;margin-bottom:0">
+          <label>Usuario a importar</label>
+          <input type="text" id="importUsername" placeholder="Ej: maria123" autocomplete="off" />
+        </div>
+        <button class="btn-secondary" onclick="adminImportUser()">Importar</button>
+      </div>
+      <p id="adminImportMsg" style="font-size:0.82rem;min-height:1.1em;margin-top:0.4rem"></p>
+    </div>
+    <div class="admin-section">
+      <h3 class="admin-section-title">Cuentas activas
+        <button class="btn-secondary btn-sm" style="margin-left:0.75rem;font-size:0.72rem" onclick="adminSyncUsers()">↻ Actualizar</button>
+      </h3>
       <div class="admin-user-list">${usersHtml}</div>
     </div>
     <div class="admin-section">
@@ -446,6 +484,76 @@ function adminRestoreUser(userId) {
   DB.set('trash', trash.filter(t => t.user.id !== userId));
   renderAdminPage();
   showToast('Cuenta restaurada ✓');
+}
+
+function adminCreateUser() {
+  const u = (document.getElementById('newUserUsername')?.value || '').trim();
+  const p = (document.getElementById('newUserPassword')?.value || '').trim();
+  const s = (document.getElementById('newUserStore')?.value || '').trim();
+  const err = document.getElementById('adminCreateError');
+  if (!u || !p) { err.textContent = 'Usuario y contraseña son obligatorios.'; return; }
+  const users = DB.get('users');
+  if (users.find(x => x.username === u)) { err.textContent = 'Ese usuario ya existe.'; return; }
+  const newUser = { id: uid(), username: u, password: p, storeName: s || (getConfig().storeName || 'LUMIÈRE') };
+  users.push(newUser);
+  DB.set('users', users);
+  err.textContent = '';
+  document.getElementById('newUserUsername').value = '';
+  document.getElementById('newUserPassword').value = '';
+  document.getElementById('newUserStore').value = '';
+  renderAdminPage();
+  showToast(`Cuenta "${u}" creada ✓`);
+}
+
+async function adminSyncUsers() {
+  if (typeof CloudSync === 'undefined' || !CloudSync.enabled) {
+    showToast('Sincronización en la nube no disponible', true); return;
+  }
+  await CloudSync.pull(ADMIN_CREDS.username);
+  renderAdminPage();
+  showToast('Lista de cuentas actualizada ✓');
+}
+
+async function adminImportUser() {
+  const targetUsername = (document.getElementById('importUsername')?.value || '').trim();
+  const msgEl = document.getElementById('adminImportMsg');
+  if (!targetUsername) { if (msgEl) msgEl.textContent = 'Escribe el nombre de usuario.'; return; }
+  if (typeof CloudSync === 'undefined' || !CloudSync.enabled) {
+    if (msgEl) msgEl.textContent = 'Sincronización en la nube no disponible.'; return;
+  }
+  if (msgEl) { msgEl.style.color = 'var(--text3)'; msgEl.textContent = 'Buscando en la nube…'; }
+  try {
+    const db = firebase.firestore();
+    const docId = targetUsername.toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 128);
+    const snap = await db.collection('stores').doc(docId).get();
+    if (!snap.exists) {
+      if (msgEl) { msgEl.style.color = '#e07070'; msgEl.textContent = `No se encontró ningún documento para "${targetUsername}".`; }
+      return;
+    }
+    const data = snap.data();
+    const remoteUsers = data.users || [];
+    const targetUser = remoteUsers.find(x => x.username === targetUsername) || remoteUsers[0];
+    if (!targetUser) {
+      if (msgEl) { msgEl.style.color = '#e07070'; msgEl.textContent = 'Documento encontrado pero no tiene usuarios.'; }
+      return;
+    }
+    const localUsers = DB.get('users');
+    if (localUsers.find(x => x.username === targetUser.username)) {
+      if (msgEl) { msgEl.style.color = '#e07070'; msgEl.textContent = `"${targetUser.username}" ya existe en las cuentas activas.`; }
+      return;
+    }
+    localUsers.push(targetUser);
+    DB.set('users', localUsers);
+    // Push updated user list to the admin's store
+    CloudSync.setUser(ADMIN_CREDS.username);
+    await CloudSync.push();
+    CloudSync.clearUser();
+    document.getElementById('importUsername').value = '';
+    if (msgEl) { msgEl.style.color = 'var(--accent2)'; msgEl.textContent = `"${targetUser.username}" importado correctamente ✓`; }
+    renderAdminPage();
+  } catch(e) {
+    if (msgEl) { msgEl.style.color = '#e07070'; msgEl.textContent = `Error: ${e.message}`; }
+  }
 }
 
 function openChangePassword(userId, username) {
