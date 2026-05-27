@@ -173,12 +173,40 @@ function fmtN(n) {
 }
 
 // ─── AUTH ───────────────────────────────────
+// ─── GLOBAL REGISTRY (accounts list + login theme, shared across all devices) ──
+async function _pullRegistry() {
+  if (typeof CloudSync === 'undefined' || !CloudSync.enabled) return null;
+  try {
+    const db = firebase.firestore();
+    const snap = await db.collection('stores').doc('_registry').get();
+    return snap.exists ? snap.data() : null;
+  } catch(e) { return null; }
+}
+async function _pushRegistry(updates) {
+  if (typeof CloudSync === 'undefined' || !CloudSync.enabled) return;
+  try {
+    const db = firebase.firestore();
+    await db.collection('stores').doc('_registry').set(updates, { merge: true });
+  } catch(e) { console.warn('[Registry]', e.message); }
+}
+
+let _adminAccounts = null; // cache for admin panel account list
+
 async function checkAutoLogin() {
+  // Always pull registry first to get latest login theme (before any login screen shows)
+  const reg = await _pullRegistry();
+  if (reg?.loginTheme) {
+    const cfg = DB.getObj('config', {});
+    cfg.loginTheme = reg.loginTheme;
+    localStorage.setItem('lum_config', JSON.stringify(cfg));
+    localStorage.setItem('lum_loginTheme', reg.loginTheme);
+  }
+
   const saved = localStorage.getItem('lum_session');
   if (saved) {
     try {
       const s = JSON.parse(saved);
-      // Admin session restore — pull latest data first
+      // Admin session restore
       if (s.isAdmin && s.username === ADMIN_CREDS.username && s.password === ADMIN_CREDS.password) {
         isAdminSession = true;
         if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
@@ -190,11 +218,11 @@ async function checkAutoLogin() {
         loginSuccess({ username: s.username, storeName: 'Administrador', isAdmin: true });
         return;
       }
-      // Pull latest data from cloud before resuming session (always from admin store)
+      // Staff session restore — pull from their own document
       if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
         const sub = document.querySelector('.login-logo p');
         if (sub) sub.textContent = 'Sincronizando datos…';
-        await CloudSync.pull(ADMIN_CREDS.username);
+        await CloudSync.pull(s.username);
         if (sub) sub.textContent = 'Sistema de Gestión';
       }
       const users = DB.get('users');
@@ -239,11 +267,11 @@ function loginSuccess(user) {
   } else {
     document.body.removeAttribute('data-admin-mode');
   }
-  // Always wire CloudSync to the admin's store so every change syncs (admin or not)
   if (typeof CloudSync !== 'undefined') {
-    CloudSync.setUser(ADMIN_CREDS.username);
+    // Admin syncs to admin's own document; staff sync to their own document
+    CloudSync.setUser(user.isAdmin ? ADMIN_CREDS.username : user.username);
     CloudSync.showInitialStatus();
-    if (!user.isAdmin) CloudSync.push(); // push on staff login to upload any local changes
+    if (!user.isAdmin) CloudSync.push();
   }
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('appMain').classList.remove('hidden');
@@ -265,8 +293,8 @@ async function handleLogin() {
   const btn = document.querySelector('#loginForm .btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = 'Verificando…'; }
 
-  // Pull from cloud first — always from the admin's store (single shared document)
-  if (typeof CloudSync !== 'undefined') await CloudSync.pull(ADMIN_CREDS.username);
+  // Pull from this user's own Firestore document (each user has separate data)
+  if (typeof CloudSync !== 'undefined') await CloudSync.pull(u);
 
   const users = DB.get('users');
   const user = users.find(x => x.username === u && x.password === p);
@@ -294,28 +322,31 @@ async function handleRegister() {
   const btn = document.querySelector('#registerForm .btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = 'Creando cuenta…'; }
 
-  // Pull from the admin's shared store to check for duplicate usernames
-  if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
-    await CloudSync.pull(ADMIN_CREDS.username);
-  }
-  const existingUsers = DB.get('users');
-  if (existingUsers.find(x => x.username === u)) {
+  // Check registry for duplicate usernames across all accounts
+  const reg = await _pullRegistry();
+  const regAccounts = reg?.accounts || [];
+  if (regAccounts.find(a => a.username === u)) {
     if (btn) { btn.disabled = false; btn.textContent = 'Registrarse'; }
     err.textContent = 'Ese usuario ya existe.';
     return;
   }
 
   const newUser = { id: uid(), username: u, password: p, storeName: s };
-  const users = DB.get('users');
-  users.push(newUser);
-  DB.set('users', users);
 
-  // Push new user into the admin's shared store so admin can see all accounts
+  // Create own Firestore document with empty store data
   if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
-    CloudSync.setUser(ADMIN_CREDS.username);
-    await CloudSync.push();
-    CloudSync.clearUser();
+    await CloudSync.pushFresh(u, newUser, s);
+  } else {
+    // Offline fallback: save locally
+    const users = DB.get('users');
+    users.push(newUser);
+    DB.set('users', users);
   }
+
+  // Add account to global registry so admin can see it
+  await _pushRegistry({
+    accounts: [...regAccounts, { id: newUser.id, username: u, storeName: s }]
+  });
 
   if (btn) { btn.disabled = false; btn.textContent = 'Registrarse'; }
   err.textContent = '';
@@ -333,11 +364,13 @@ function logout() {
   toggleAuthMode('login');
 }
 
-function setLoginTheme(palette) {
+async function setLoginTheme(palette) {
   localStorage.setItem('lum_loginTheme', palette);
   const cfg = getConfig();
   cfg.loginTheme = palette;
-  DB.set('config', cfg); // syncs to cloud with schedulePush
+  localStorage.setItem('lum_config', JSON.stringify(cfg));
+  // Write to global registry so ALL devices see the new login theme
+  await _pushRegistry({ loginTheme: palette });
   showToast('Tema de login actualizado ✓');
   renderAdminPage();
 }
@@ -361,12 +394,16 @@ function cleanupTrash() {
 
 function renderAdminPage() {
   cleanupTrash();
-  const users = DB.get('users');
+  // Use registry cache if available, otherwise local users as fallback
+  const users = _adminAccounts !== null ? _adminAccounts : DB.get('users');
   const trash = DB.get('trash');
   const week = 7 * 24 * 60 * 60 * 1000;
 
+  // Auto-load from registry if not loaded yet
+  if (_adminAccounts === null) adminSyncUsers();
+
   const usersHtml = users.length === 0
-    ? '<p class="empty-state">No hay cuentas registradas.</p>'
+    ? '<p class="empty-state">No hay cuentas registradas. Si hay cuentas en la nube, pulsa ↻ Actualizar.</p>'
     : users.map(u => `
       <div class="admin-user-row">
         <div class="admin-user-info">
@@ -464,11 +501,16 @@ function adminDeleteUser(userId) {
   const users = DB.get('users');
   const user = users.find(u => u.id === userId);
   if (!user) return;
-  confirm2('¿Mover a papelera?', `La cuenta "${user.username}" quedará 7 días antes de borrarse definitivamente.`, () => {
+  confirm2('¿Mover a papelera?', `La cuenta "${user.username}" quedará 7 días antes de borrarse definitivamente.`, async () => {
     DB.set('users', users.filter(u => u.id !== userId));
     const trash = DB.get('trash');
     trash.push({ user, deletedAt: Date.now() });
     DB.set('trash', trash);
+    // Remove from global registry
+    if (_adminAccounts) {
+      _adminAccounts = _adminAccounts.filter(a => a.id !== userId);
+      await _pushRegistry({ accounts: _adminAccounts });
+    }
     renderAdminPage();
     showToast('Cuenta movida a papelera');
   });
@@ -486,20 +528,26 @@ function adminRestoreUser(userId) {
   showToast('Cuenta restaurada ✓');
 }
 
-function adminCreateUser() {
+async function adminCreateUser() {
   const u = (document.getElementById('newUserUsername')?.value || '').trim();
   const p = (document.getElementById('newUserPassword')?.value || '').trim();
   const s = (document.getElementById('newUserStore')?.value || '').trim();
   const err = document.getElementById('adminCreateError');
   if (!u || !p) { err.textContent = 'Usuario y contraseña son obligatorios.'; return; }
-  const users = DB.get('users');
-  if (users.find(x => x.username === u)) { err.textContent = 'Ese usuario ya existe.'; return; }
+  const existing = (_adminAccounts || DB.get('users'));
+  if (existing.find(x => x.username === u)) { err.textContent = 'Ese usuario ya existe.'; return; }
   const newUser = { id: uid(), username: u, password: p, storeName: s || (getConfig().storeName || 'LUMIÈRE') };
-  users.push(newUser);
-  DB.set('users', users);
+  // Create their own Firestore document
+  if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
+    await CloudSync.pushFresh(u, newUser, s);
+  }
+  // Add to global registry
+  const regEntry = { id: newUser.id, username: u, storeName: newUser.storeName };
+  _adminAccounts = [...(existing), regEntry];
+  await _pushRegistry({ accounts: _adminAccounts });
   err.textContent = '';
   document.getElementById('newUserUsername').value = '';
-  document.getElementById('newUserPassword').value = '';
+  document.getElementById('newUserPassword')?.value != null && (document.getElementById('newUserPassword').value = '');
   document.getElementById('newUserStore').value = '';
   renderAdminPage();
   showToast(`Cuenta "${u}" creada ✓`);
@@ -507,11 +555,13 @@ function adminCreateUser() {
 
 async function adminSyncUsers() {
   if (typeof CloudSync === 'undefined' || !CloudSync.enabled) {
-    showToast('Sincronización en la nube no disponible', true); return;
+    _adminAccounts = DB.get('users');
+    renderAdminPage();
+    return;
   }
-  await CloudSync.pull(ADMIN_CREDS.username);
+  const reg = await _pullRegistry();
+  _adminAccounts = reg?.accounts || DB.get('users');
   renderAdminPage();
-  showToast('Lista de cuentas actualizada ✓');
 }
 
 async function adminImportUser() {
@@ -542,12 +592,15 @@ async function adminImportUser() {
       if (msgEl) { msgEl.style.color = '#e07070'; msgEl.textContent = `"${targetUser.username}" ya existe en las cuentas activas.`; }
       return;
     }
-    localUsers.push(targetUser);
-    DB.set('users', localUsers);
-    // Push updated user list to the admin's store
-    CloudSync.setUser(ADMIN_CREDS.username);
-    await CloudSync.push();
-    CloudSync.clearUser();
+    // Add to global registry (user keeps their own Firestore doc)
+    const regEntry = { id: targetUser.id, username: targetUser.username, storeName: targetUser.storeName || '' };
+    const existing = _adminAccounts || DB.get('users');
+    if (existing.find(a => a.username === regEntry.username)) {
+      if (msgEl) { msgEl.style.color = '#e07070'; msgEl.textContent = `"${regEntry.username}" ya existe en las cuentas activas.`; }
+      return;
+    }
+    _adminAccounts = [...existing, regEntry];
+    await _pushRegistry({ accounts: _adminAccounts });
     document.getElementById('importUsername').value = '';
     if (msgEl) { msgEl.style.color = 'var(--accent2)'; msgEl.textContent = `"${targetUser.username}" importado correctamente ✓`; }
     renderAdminPage();
