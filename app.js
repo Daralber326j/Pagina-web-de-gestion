@@ -193,6 +193,7 @@ function loginSuccess(user) {
   if (typeof CloudSync !== 'undefined') {
     CloudSync.setUser(user.username);
     CloudSync.showInitialStatus();
+    CloudSync.push();
   }
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('appMain').classList.remove('hidden');
