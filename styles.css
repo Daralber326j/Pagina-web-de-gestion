@@ -1389,20 +1389,105 @@ body[data-admin-mode] .palette-label { color: rgba(160,220,255,0.8); }
   align-items: center;
   gap: 0.8rem;
   font-size: 0.85rem;
+  transition: background 0.15s;
 }
+.sale-history-item:hover { background: var(--bg3); }
 
 .sale-history-item .s-name { flex: 1; font-weight: 500; color: var(--text); }
 .sale-history-item .s-client { color: var(--text3); font-size: 0.78rem; }
 .sale-history-item .s-amount { font-family: 'Cormorant Garamond', serif; font-size: 1rem; color: var(--accent); }
 .sale-history-item .s-date { font-size: 0.73rem; color: var(--text3); }
 
+/* Sale history expandable detail */
+.sh-detail {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  padding: 0.65rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+}
+.sh-detail.hidden { display: none; }
+.sh-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 0;
+  color: var(--text2);
+  gap: 0.5rem;
+}
+.sh-detail-row.pay { color: var(--text3); font-size: 0.75rem; }
+.sh-detail-row.profit span:last-child { color: var(--accent2); font-weight: 600; }
+.sh-pay-amt { color: var(--accent2); font-weight: 600; flex-shrink: 0; }
+.sh-detail-sub { font-size: 0.72rem; color: var(--text3); margin-top: 0.25rem; }
+.sh-pay-btn {
+  margin-top: 0.5rem;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.8rem;
+  width: 100%;
+}
+
+/* Payment modal history detail panel */
+.pm-hist-detail {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.78rem;
+  color: var(--text2);
+}
+.pm-hist-detail.hidden { display: none; }
+.pm-hist-detail-label { color: var(--text3); font-size: 0.72rem; margin-bottom: 0.3rem; }
+.pm-hist-detail-items { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.4rem; }
+.pm-hist-detail-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  color: var(--text2);
+}
+.pm-hist-detail-total { color: var(--text3); font-size: 0.75rem; }
+
 /* ─── REPORTS ─── */
+.rp-period-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+  grid-column: 1 / -1;
+}
+.rp-btn {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  border-radius: 20px;
+  padding: 0.3rem 0.85rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  font-family: var(--font-body);
+}
+.rp-btn:hover { background: var(--bg3); color: var(--text); }
+.rp-btn.active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
 .reports-summary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 1rem;
   margin-bottom: 2rem;
 }
+
+.stat-card.profit-card .stat-value { color: var(--accent2); }
 
 .debt-table {
   display: flex;

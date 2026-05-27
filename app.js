@@ -964,10 +964,11 @@ function openClientDetail(clientId) {
       const imgEl = (prod && prod.image)
         ? `<img src="${prod.image}" class="cd-item-img" alt="" />`
         : `<div class="cd-item-emoji">${categoryEmoji(prod ? prod.category : 'otro')}</div>`;
-      // Distribute remaining debt proportionally across items
-      const itemRemaining = s.total > 0
-        ? Math.max(0, (item.total / s.total) * remaining)
-        : 0;
+      // Per-item remaining: use stored amountPaid if available, else proportional fallback
+      const itemAmtPaid = typeof item.amountPaid === 'number'
+        ? item.amountPaid
+        : (s.total > 0 ? (item.total / s.total) * getSaleAmountPaid(s) : 0);
+      const itemRemaining = Math.max(0, item.total - itemAmtPaid);
       return `<div class="cd-sale-item">
         ${imgEl}
         <div class="cd-sale-info">
@@ -1082,8 +1083,11 @@ function switchClientTab(tab) {
 
 // ─── PAYMENT SYSTEM ─────────────────────────
 function getSaleAmountPaid(sale) {
-  if (sale.paid === true && !sale.payments) return sale.total;
-  return sale.amountPaid || 0;
+  if (sale.payments && sale.payments.length > 0) {
+    return sale.payments.reduce((a, p) => a + (p.amount || 0), 0);
+  }
+  if (sale.paid === true) return sale.total;
+  return 0;
 }
 
 function getSaleRemaining(sale) {
@@ -1110,17 +1114,21 @@ function openPaymentModal(saleId, clientId) {
 
   const showCheckboxes = items.length > 1 && remaining > 0.001;
 
-  const itemsHtml = items.map(item => {
+  const itemsHtml = items.map((item, idx) => {
     const prod = products.find(p => p.id === item.productId);
     const imgEl = (prod && prod.image)
       ? `<img src="${prod.image}" class="pm-item-img" alt="" />`
       : `<div class="pm-item-emoji">${categoryEmoji(prod ? prod.category : 'otro')}</div>`;
+    // Per-item remaining: use stored amountPaid if available, else proportional fallback
+    const itemAmtPaid = typeof item.amountPaid === 'number'
+      ? item.amountPaid
+      : (sale.total > 0 ? (item.total / sale.total) * getSaleAmountPaid(sale) : 0);
+    const itemRemaining = Math.max(0, item.total - itemAmtPaid);
     const checkEl = showCheckboxes
-      ? `<label class="pm-item-check" onclick="event.stopPropagation()"><input type="checkbox" checked value="${item.total.toFixed(2)}" onchange="updatePayFromChecked()" /></label>`
+      ? `<label class="pm-item-check" onclick="event.stopPropagation()"><input type="checkbox" checked value="${Math.round(itemRemaining)}" onchange="updatePayFromChecked()" /></label>`
       : '';
-    const itemRemaining = sale.total > 0 ? Math.max(0, (item.total / sale.total) * remaining) : 0;
     const paidOff = itemRemaining < 0.5;
-    return `<div class="pm-item-row${showCheckboxes ? ' pm-selectable' : ''}" ${showCheckboxes ? 'onclick="togglePmItem(this)"' : ''}>
+    return `<div class="pm-item-row${showCheckboxes ? ' pm-selectable' : ''}" data-item-idx="${idx}" ${showCheckboxes ? 'onclick="togglePmItem(this)"' : ''}>
       ${checkEl}${imgEl}
       <div class="pm-item-info">
         <span class="pm-item-name">${item.productName}</span>
@@ -1136,16 +1144,25 @@ function openPaymentModal(saleId, clientId) {
   }).join('');
 
   const payHist = (sale.payments || []);
+  const saleItemsPreview = getSaleItems(sale).map(i =>
+    `<span class="pm-hist-detail-item">${i.productName} ×${i.qty}</span>`).join('');
   const histHtml = payHist.length
-    ? payHist.map(p => `<div class="pm-hist-item">
+    ? payHist.map(p => `
+      <div class="pm-hist-item" onclick="togglePmHistDetail(this)">
         <div class="pm-hist-left">
-          <span class="pm-hist-date">${p.date}</span>
+          <span class="pm-hist-date">${p.date}${p.by ? ` · <b>${p.by}</b>` : ''}</span>
           ${p.note ? `<span class="pm-hist-note">${p.note}</span>` : ''}
         </div>
         <div class="pm-hist-right">
           <span class="pm-hist-amount">${currency}${fmtN(p.amount)}</span>
-          <button class="pm-hist-undo" onclick="deletePayment('${sale.id}','${p.id}')" title="Deshacer este pago">↩ Deshacer</button>
+          <button class="pm-hist-undo" onclick="event.stopPropagation();deletePayment('${sale.id}','${p.id}')" title="Deshacer este pago">↩</button>
         </div>
+      </div>
+      <div class="pm-hist-detail hidden">
+        <p class="pm-hist-detail-label">Productos en esta venta:</p>
+        <div class="pm-hist-detail-items">${saleItemsPreview}</div>
+        <p class="pm-hist-detail-total">Total venta: <strong>${currency}${fmtN(sale.total)}</strong>
+          · Abono: <strong>${currency}${fmtN(p.amount)}</strong></p>
       </div>`).join('')
     : `<p class="pm-hist-empty">Sin pagos registrados aún.</p>`;
 
@@ -1162,14 +1179,14 @@ function openPaymentModal(saleId, clientId) {
       <div class="pm-new-row">
         <div class="input-group" style="flex:1;margin-bottom:0">
           <label>Monto a pagar</label>
-          <input type="number" id="payAmount" min="0.01" max="${remaining.toFixed(2)}" step="any" value="" placeholder="Escribe el monto..." />
+          <input type="number" id="payAmount" min="1" max="${Math.ceil(remaining)}" step="1" value="" placeholder="Escribe el monto..." />
         </div>
         <div class="input-group" style="flex:1;margin-bottom:0">
           <label>Nota (opcional)</label>
           <input type="text" id="payNote" placeholder="Abono, efectivo..." />
         </div>
       </div>
-      <button class="pm-pay-all-btn" onclick="setPayAmount(${remaining.toFixed(2)})">
+      <button class="pm-pay-all-btn" onclick="setPayAmount(${Math.ceil(remaining)})">
         Saldar todo — ${currency}${fmtN(remaining)}
       </button>
     </div>` : `<div class="pm-done-banner">Deuda saldada completamente ✓</div>`;
@@ -1205,7 +1222,7 @@ function openPaymentModal(saleId, clientId) {
 
 function setPayAmount(amount) {
   const inp = document.getElementById('payAmount');
-  if (inp) { inp.value = amount.toFixed(2); inp.focus(); }
+  if (inp) { inp.value = Math.round(amount); inp.focus(); }
 }
 
 function togglePmItem(row) {
@@ -1221,11 +1238,10 @@ function updatePayFromChecked() {
   let sum = 0;
   boxes.forEach(cb => { sum += parseFloat(cb.value) || 0; });
   const sale = DB.get('sales').find(s => s.id === _paymentSaleId);
-  if (sale) sum = Math.min(sum, getSaleRemaining(sale));
 
   const autoOn = document.getElementById('pmAutoCalc')?.checked;
   const inp = document.getElementById('payAmount');
-  if (autoOn && inp) inp.value = sum > 0 ? sum.toFixed(2) : '';
+  if (autoOn && inp) inp.value = sum > 0 ? Math.round(sum) : '';
 
   const summary = document.getElementById('pmSummary');
   if (!summary) return;
@@ -1249,6 +1265,20 @@ function updatePayFromChecked() {
     </div>`;
 }
 
+function toggleShDetail(row) {
+  const detail = row.nextElementSibling;
+  if (detail && detail.classList.contains('sh-detail')) {
+    detail.classList.toggle('hidden');
+  }
+}
+
+function togglePmHistDetail(row) {
+  const detail = row.nextElementSibling;
+  if (detail && detail.classList.contains('pm-hist-detail')) {
+    detail.classList.toggle('hidden');
+  }
+}
+
 function togglePmAutoCalc(enabled) {
   const inp = document.getElementById('payAmount');
   const summary = document.getElementById('pmSummary');
@@ -1270,35 +1300,61 @@ function submitPayment() {
   if (!sale) return;
 
   const remaining = getSaleRemaining(sale);
-  if (amount > remaining + 0.001) {
+  const remainingRounded = Math.ceil(remaining);
+  if (amount > remainingRounded) {
     showToast(`Máximo a pagar: ${getCurrency()}${fmtN(remaining)}`, true);
     return;
   }
 
+  // Capture which items are checked to apply payment per-item
+  const allBoxes = [...document.querySelectorAll('.pm-item-check input[type="checkbox"]')];
+  const itemAllocations = {};
+  if (allBoxes.length > 0) {
+    const checkedBoxes = allBoxes.filter(cb => cb.checked);
+    const totalCheckedVal = checkedBoxes.reduce((a, cb) => a + (parseFloat(cb.value) || 0), 0);
+    checkedBoxes.forEach(cb => {
+      const row = cb.closest('[data-item-idx]');
+      const idx = row ? parseInt(row.dataset.itemIdx) : 0;
+      const share = totalCheckedVal > 0 ? (parseFloat(cb.value) || 0) / totalCheckedVal : 0;
+      itemAllocations[idx] = amount * share;
+    });
+  }
+
   const currency = getCurrency();
-  const isFull = amount >= remaining - 0.001;
+  const isFull = amount >= remainingRounded;
   const confirmMsg = isFull
     ? `¿Registrar pago completo de ${currency}${fmtN(amount)} y marcar la deuda como saldada?`
     : `¿Registrar abono de ${currency}${fmtN(amount)}? Quedará ${currency}${fmtN(remaining - amount)} pendiente.`;
 
-  confirm2('Confirmar pago', confirmMsg, () => _doSubmitPayment(amount, note));
+  confirm2('Confirmar pago', confirmMsg, () => _doSubmitPayment(amount, note, itemAllocations));
 }
 
-function _doSubmitPayment(amount, note) {
+function _doSubmitPayment(amount, note, itemAllocations) {
   const sales = DB.get('sales');
   const sale = sales.find(s => s.id === _paymentSaleId);
   if (!sale) return;
 
   if (!sale.payments) sale.payments = [];
-  if (typeof sale.amountPaid !== 'number') sale.amountPaid = getSaleAmountPaid(sale);
 
-  sale.payments.push({ id: uid(), amount, date: todayStr(), note });
-  sale.amountPaid = (sale.amountPaid || 0) + amount;
-
-  if (sale.amountPaid >= sale.total - 0.001) {
-    sale.paid = true;
-    sale.amountPaid = sale.total;
+  // Apply payment to each item's amountPaid
+  if (sale.items) {
+    const hasAlloc = itemAllocations && Object.keys(itemAllocations).length > 0;
+    sale.items.forEach((item, idx) => {
+      let itemPay = 0;
+      if (hasAlloc) {
+        itemPay = itemAllocations[idx] || 0;
+      } else {
+        // single-item or no checkboxes: all goes to this item proportionally
+        itemPay = sale.total > 0 ? (item.total / sale.total) * amount : 0;
+      }
+      item.amountPaid = Math.min(item.total, (item.amountPaid || 0) + itemPay);
+    });
   }
+
+  sale.payments.push({ id: uid(), amount, date: todayStr(), note, by: currentUser?.username || '', itemAmounts: itemAllocations || {} });
+  sale.amountPaid = sale.payments.reduce((a, p) => a + p.amount, 0);
+  sale.paid = sale.amountPaid >= sale.total - 0.001;
+  if (sale.paid) sale.amountPaid = sale.total;
 
   DB.set('sales', sales);
   logAction('pagos', 'Pago registrado', `${getCurrency()}${fmtN(amount)}${note ? ' — ' + note : ''}`);
@@ -1328,6 +1384,18 @@ function deletePayment(saleId, paymentId) {
     `¿Eliminar el pago de ${getCurrency()}${fmtN(pay.amount)} del ${pay.date}? La deuda volverá a estar pendiente.`,
     () => {
       sale.payments = sale.payments.filter(p => p.id !== paymentId);
+
+      // Recalculate per-item amountPaid from remaining payments
+      if (sale.items) {
+        sale.items.forEach((item, idx) => {
+          item.amountPaid = sale.payments.reduce((a, p) => {
+            if (p.itemAmounts && p.itemAmounts[idx] !== undefined) return a + p.itemAmounts[idx];
+            return a + (sale.total > 0 ? (item.total / sale.total) * p.amount : 0);
+          }, 0);
+          item.amountPaid = Math.min(item.amountPaid, item.total);
+        });
+      }
+
       sale.amountPaid = sale.payments.reduce((a, p) => a + p.amount, 0);
       sale.paid = sale.amountPaid >= sale.total - 0.001;
       if (sale.paid) sale.amountPaid = sale.total;
@@ -1562,6 +1630,7 @@ function registerSale() {
     clientId: clientId || null,
     total,
     profit,
+    by: currentUser?.username || '',
     date: todayStr(),
     timestamp: now(),
     paid: !fiado,
@@ -1612,9 +1681,20 @@ function renderSalesHistory() {
       : `${items[0].productName} +${items.length - 1} más · ${totalUnits} ud.`;
     const isPending = getSaleRemaining(s) > 0.001;
     const statusBadge = isPending
-      ? `<span class="fiado-badge" onclick="openPaymentModal('${s.id}',null)" title="Ver deuda y registrar pago" style="cursor:pointer">Fiado →</span>`
+      ? `<span class="fiado-badge" onclick="event.stopPropagation();openPaymentModal('${s.id}',null)" style="cursor:pointer">Fiado →</span>`
       : `<span class="paid-badge">Pagado</span>`;
-    return `<div class="sale-history-item">
+    const itemsDetail = items.map(i =>
+      `<div class="sh-detail-row"><span>${i.productName} ×${i.qty}</span><span>${currency}${fmtN(i.unitPrice)} c/u → <b>${currency}${fmtN(i.total)}</b></span></div>`
+    ).join('');
+    const paymentsDetail = (s.payments || []).length
+      ? (s.payments || []).map(p =>
+          `<div class="sh-detail-row pay"><span>${p.date}${p.by ? ' · ' + p.by : ''}${p.note ? ' — ' + p.note : ''}</span><span class="sh-pay-amt">+${currency}${fmtN(p.amount)}</span></div>`
+        ).join('')
+      : '';
+    const profitDetail = typeof s.profit === 'number'
+      ? `<div class="sh-detail-row profit"><span>Ganancia</span><span>${currency}${fmtN(s.profit)}</span></div>` : '';
+    return `
+    <div class="sale-history-item" onclick="toggleShDetail(this)" style="cursor:pointer">
       <div>
         <span class="s-name">${productLabel}</span><br>
         <span class="s-client">${client ? client.name : 'Sin cliente'} ${statusBadge}</span>
@@ -1623,6 +1703,12 @@ function renderSalesHistory() {
         <span class="s-amount">${currency}${fmtN(s.total)}</span><br>
         <span class="s-date">${s.date}</span>
       </div>
+    </div>
+    <div class="sh-detail hidden">
+      ${itemsDetail}
+      ${profitDetail}
+      ${paymentsDetail ? `<p class="sh-detail-sub">Pagos registrados:</p>${paymentsDetail}` : ''}
+      ${isPending ? `<button class="btn-primary sh-pay-btn" onclick="openPaymentModal('${s.id}',null)">Registrar Pago →</button>` : ''}
     </div>`;
   }).join('');
 }
@@ -1757,34 +1843,77 @@ function renderTopProductsChart(sales, products) {
 }
 
 // ─── REPORTS ────────────────────────────────
+let _reportPeriod = 'all';
+
+function setReportPeriod(period) {
+  _reportPeriod = period;
+  document.querySelectorAll('.rp-btn').forEach(b => b.classList.toggle('active', b.dataset.period === period));
+  renderReports();
+}
+
+function _filterSalesByPeriod(sales, period) {
+  if (period === 'all') return sales;
+  const now = new Date();
+  let cutoff;
+  if (period === 'week') {
+    cutoff = new Date(now); cutoff.setDate(now.getDate() - 7);
+  } else if (period === 'month') {
+    cutoff = new Date(now); cutoff.setMonth(now.getMonth() - 1);
+  } else if (period === '3m') {
+    cutoff = new Date(now); cutoff.setMonth(now.getMonth() - 3);
+  } else if (period === '8m') {
+    cutoff = new Date(now); cutoff.setMonth(now.getMonth() - 8);
+  } else if (period === 'year') {
+    cutoff = new Date(now); cutoff.setFullYear(now.getFullYear() - 1);
+  }
+  const cutStr = cutoff.toISOString().slice(0, 10);
+  return sales.filter(s => s.date >= cutStr);
+}
+
 function renderReports() {
-  const sales = DB.get('sales');
+  const allSales = DB.get('sales');
+  const sales = _filterSalesByPeriod(allSales, _reportPeriod);
   const clients = getClients();
   const currency = getCurrency();
 
-  const totalRevenue = sales.reduce((a,s) => a + s.total, 0);
-  const totalProfit = sales.reduce((a,s) => a + (s.profit || 0), 0);
-  const totalUnits = sales.reduce((a,s) => a + s.qty, 0);
+  // Profit = sum of (sellingPrice - costPrice) * qty per item
+  const totalRevenue = sales.reduce((a, s) => a + s.total, 0);
+  const totalProfit  = sales.reduce((a, s) => {
+    if (typeof s.profit === 'number') return a + s.profit;
+    // Fallback: sum item-level profits if stored, otherwise 0
+    return a + getSaleItems(s).reduce((b, i) => b + (typeof i.profit === 'number' ? i.profit : 0), 0);
+  }, 0);
+  const totalUnits = sales.reduce((a, s) => {
+    return a + getSaleItems(s).reduce((b, i) => b + i.qty, 0);
+  }, 0);
+
+  const periodLabels = { all:'Siempre', week:'Esta semana', month:'Este mes', '3m':'3 meses', '8m':'8 meses', year:'Este año' };
 
   const summary = document.getElementById('reportsSummary');
   if (summary) {
-    summary.innerHTML = [
-      { label: 'Ingresos Totales', val: currency + fmtN(totalRevenue), accent: true },
-      { label: 'Ganancia Estimada', val: currency + fmtN(totalProfit), accent: true },
-      { label: 'Unidades Vendidas', val: totalUnits },
-      { label: 'Total Ventas', val: sales.length },
-    ].map(s => `
-      <div class="stat-card ${s.accent ? 'accent' : ''}">
-        <div class="stat-info">
-          <p class="stat-label">${s.label}</p>
-          <h3 class="stat-value">${s.val}</h3>
-        </div>
-      </div>`).join('');
+    summary.innerHTML = `
+      <div class="rp-period-bar">
+        ${Object.entries(periodLabels).map(([k,v]) =>
+          `<button class="rp-btn${_reportPeriod===k?' active':''}" data-period="${k}" onclick="setReportPeriod('${k}')">${v}</button>`
+        ).join('')}
+      </div>` +
+      [
+        { label: 'Ingresos', val: currency + fmtN(totalRevenue), accent: true },
+        { label: 'Ganancia neta', val: currency + fmtN(totalProfit), accent: true, green: true },
+        { label: 'Unidades', val: totalUnits },
+        { label: 'Ventas', val: sales.length },
+      ].map(s => `
+        <div class="stat-card ${s.accent ? 'accent' : ''} ${s.green ? 'profit-card' : ''}">
+          <div class="stat-info">
+            <p class="stat-label">${s.label}</p>
+            <h3 class="stat-value">${s.val}</h3>
+          </div>
+        </div>`).join('');
   }
 
   renderMonthlyChart(sales);
   renderCategoryChart(sales);
-  renderDebtTable(clients, sales, currency);
+  renderDebtTable(clients, allSales, currency);
 }
 
 function renderMonthlyChart(sales) {
