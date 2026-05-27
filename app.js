@@ -238,12 +238,12 @@ function loginSuccess(user) {
     document.body.setAttribute('data-admin-mode', 'true');
   } else {
     document.body.removeAttribute('data-admin-mode');
-    if (typeof CloudSync !== 'undefined') {
-      // Always sync to the admin's store document, not per-user documents
-      CloudSync.setUser(ADMIN_CREDS.username);
-      CloudSync.showInitialStatus();
-      CloudSync.push();
-    }
+  }
+  // Always wire CloudSync to the admin's store so every change syncs (admin or not)
+  if (typeof CloudSync !== 'undefined') {
+    CloudSync.setUser(ADMIN_CREDS.username);
+    CloudSync.showInitialStatus();
+    if (!user.isAdmin) CloudSync.push(); // push on staff login to upload any local changes
   }
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('appMain').classList.remove('hidden');
