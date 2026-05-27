@@ -398,7 +398,7 @@ function renderAdminPage() {
     { id: 'white',    label: 'Gris Neutro',colors: ['#b8b8b8','#d4d4d4','#5a6a7a','#181818'] },
     { id: 'agua',     label: 'Agua',       colors: ['#030810','#0c2040','#38bdf8','#ffffff'] },
     { id: 'cristal',  label: 'Cristal',    colors: ['#cce4f8','#eaf4ff','#0284c7','#0d1f3c'] },
-    { id: 'perla',    label: 'Perla',      colors: ['#eef1f6','#ffffff','#9ca3af','#111827'] },
+    { id: 'perla',    label: 'Perla',      colors: ['#c8d2e0','rgba(255,255,255,0.35)','#475569','#0f172a'] },
   ];
   const themePickerHtml = loginThemes.map(t => `
     <button class="palette-card ${t.id === currentLoginTheme ? 'active' : ''}" onclick="setLoginTheme('${t.id}')">
@@ -964,13 +964,20 @@ function openClientDetail(clientId) {
       const imgEl = (prod && prod.image)
         ? `<img src="${prod.image}" class="cd-item-img" alt="" />`
         : `<div class="cd-item-emoji">${categoryEmoji(prod ? prod.category : 'otro')}</div>`;
+      // Distribute remaining debt proportionally across items
+      const itemRemaining = s.total > 0
+        ? Math.max(0, (item.total / s.total) * remaining)
+        : 0;
       return `<div class="cd-sale-item">
         ${imgEl}
         <div class="cd-sale-info">
           <span class="cd-sale-name">${item.productName}</span>
           <span class="cd-sale-detail">${item.qty} ud. · ${currency}${fmtN(item.unitPrice)} c/u</span>
         </div>
-        <span class="cd-sale-sub" style="font-size:0.78rem;color:var(--text3)">${currency}${fmtN(item.total)}</span>
+        <div style="text-align:right">
+          <span class="cd-sale-sub">${currency}${fmtN(itemRemaining)}</span>
+          <span style="font-size:0.68rem;color:var(--text3);display:block">pendiente</span>
+        </div>
       </div>`;
     }).join('');
     return `<div class="cd-fiado-card">
@@ -1111,32 +1118,51 @@ function openPaymentModal(saleId, clientId) {
     const checkEl = showCheckboxes
       ? `<label class="pm-item-check" onclick="event.stopPropagation()"><input type="checkbox" checked value="${item.total.toFixed(2)}" onchange="updatePayFromChecked()" /></label>`
       : '';
+    const itemRemaining = sale.total > 0 ? Math.max(0, (item.total / sale.total) * remaining) : 0;
+    const paidOff = itemRemaining < 0.5;
     return `<div class="pm-item-row${showCheckboxes ? ' pm-selectable' : ''}" ${showCheckboxes ? 'onclick="togglePmItem(this)"' : ''}>
       ${checkEl}${imgEl}
       <div class="pm-item-info">
         <span class="pm-item-name">${item.productName}</span>
         <span class="pm-item-detail">${item.qty} ud. · ${currency}${fmtN(item.unitPrice)} c/u</span>
       </div>
-      <span class="pm-item-total">${currency}${fmtN(item.total)}</span>
+      <div style="text-align:right;flex-shrink:0">
+        <span class="pm-item-total">${currency}${fmtN(item.total)}</span>
+        ${remaining > 0.001
+          ? `<span class="pm-item-pending">${paidOff ? '✓' : currency + fmtN(itemRemaining) + ' pendiente'}</span>`
+          : `<span class="pm-item-pending paid">✓ pagado</span>`}
+      </div>
     </div>`;
   }).join('');
 
   const payHist = (sale.payments || []);
   const histHtml = payHist.length
     ? payHist.map(p => `<div class="pm-hist-item">
-        <span class="pm-hist-date">${p.date}</span>
-        ${p.note ? `<span class="pm-hist-note">${p.note}</span>` : ''}
-        <span class="pm-hist-amount">${currency}${fmtN(p.amount)}</span>
+        <div class="pm-hist-left">
+          <span class="pm-hist-date">${p.date}</span>
+          ${p.note ? `<span class="pm-hist-note">${p.note}</span>` : ''}
+        </div>
+        <div class="pm-hist-right">
+          <span class="pm-hist-amount">${currency}${fmtN(p.amount)}</span>
+          <button class="pm-hist-undo" onclick="deletePayment('${sale.id}','${p.id}')" title="Deshacer este pago">↩ Deshacer</button>
+        </div>
       </div>`).join('')
     : `<p class="pm-hist-empty">Sin pagos registrados aún.</p>`;
 
   const newPaySection = remaining > 0.001 ? `
     <div class="pm-new-section">
       <h4>Registrar pago</h4>
+      ${showCheckboxes ? `
+      <label class="pm-mode-toggle">
+        <input type="checkbox" id="pmAutoCalc" onchange="togglePmAutoCalc(this.checked)" />
+        <span>Calcular monto desde ítems marcados</span>
+      </label>
+      <div id="pmSummary" class="pm-summary" style="display:none"></div>
+      ` : ''}
       <div class="pm-new-row">
         <div class="input-group" style="flex:1;margin-bottom:0">
           <label>Monto a pagar</label>
-          <input type="number" id="payAmount" min="0.01" max="${remaining.toFixed(2)}" step="0.01" value="${remaining.toFixed(2)}" />
+          <input type="number" id="payAmount" min="0.01" max="${remaining.toFixed(2)}" step="any" value="" placeholder="Escribe el monto..." />
         </div>
         <div class="input-group" style="flex:1;margin-bottom:0">
           <label>Nota (opcional)</label>
@@ -1150,13 +1176,12 @@ function openPaymentModal(saleId, clientId) {
 
   document.getElementById('paymentModalBody').innerHTML = `
     <div class="pm-items-list">${itemsHtml}</div>
-    ${showCheckboxes ? `<p style="font-size:0.75rem;color:var(--text3);margin:-0.5rem 0 0.5rem">Toca un ítem para seleccionarlo o deseleccionarlo</p>
-    <div id="pmSummary" class="pm-summary"></div>` : ''}
+    ${showCheckboxes ? `<p style="font-size:0.75rem;color:var(--text3);margin:-0.5rem 0 0.5rem">Marca o desmarca ítems, luego activa el cálculo automático o escribe el monto</p>` : ''}
 
     <div class="pm-progress-section">
       <div class="pm-progress-track"><div class="pm-progress-fill" style="width:${pct}%"></div></div>
       <div class="pm-progress-labels">
-        <span>Pagado: <strong>${currency}${fmtN(paid)}</strong></span>
+        <span>Abonado: <strong>${currency}${fmtN(paid)}</strong></span>
         <span class="pm-pct">${pct}%</span>
         <span>Total: <strong>${currency}${fmtN(sale.total)}</strong></span>
       </div>
@@ -1175,8 +1200,6 @@ function openPaymentModal(saleId, clientId) {
 
   const btn = document.getElementById('paymentModalBtn');
   if (btn) btn.style.display = remaining > 0.001 ? '' : 'none';
-
-  if (showCheckboxes) updatePayFromChecked();
   openModal('paymentModal');
 }
 
@@ -1199,14 +1222,18 @@ function updatePayFromChecked() {
   boxes.forEach(cb => { sum += parseFloat(cb.value) || 0; });
   const sale = DB.get('sales').find(s => s.id === _paymentSaleId);
   if (sale) sum = Math.min(sum, getSaleRemaining(sale));
+
+  const autoOn = document.getElementById('pmAutoCalc')?.checked;
   const inp = document.getElementById('payAmount');
-  if (inp) inp.value = sum.toFixed(2);
+  if (autoOn && inp) inp.value = sum > 0 ? sum.toFixed(2) : '';
 
   const summary = document.getElementById('pmSummary');
   if (!summary) return;
+  if (!autoOn) { summary.style.display = 'none'; return; }
+  summary.style.display = '';
   const currency = getCurrency();
   if (sum <= 0) {
-    summary.innerHTML = `<p class="pm-summary-none">Selecciona al menos un ítem para calcular el pago</p>`;
+    summary.innerHTML = `<p class="pm-summary-none">Desmarcaste todos los ítems</p>`;
     return;
   }
   const totalRemaining = sale ? getSaleRemaining(sale) : sum;
@@ -1220,6 +1247,17 @@ function updatePayFromChecked() {
       <span>Quedará pendiente:</span>
       <strong>${currency}${fmtN(afterPay)}</strong>
     </div>`;
+}
+
+function togglePmAutoCalc(enabled) {
+  const inp = document.getElementById('payAmount');
+  const summary = document.getElementById('pmSummary');
+  if (!enabled) {
+    if (inp) inp.value = '';
+    if (summary) { summary.style.display = 'none'; summary.innerHTML = ''; }
+  } else {
+    updatePayFromChecked();
+  }
 }
 
 function submitPayment() {
@@ -1277,6 +1315,38 @@ function _doSubmitPayment(amount, note) {
       openModal('paymentModal');
     }
   }
+}
+
+function deletePayment(saleId, paymentId) {
+  const sales = DB.get('sales');
+  const sale = sales.find(s => s.id === saleId);
+  if (!sale || !sale.payments) return;
+  const pay = sale.payments.find(p => p.id === paymentId);
+  if (!pay) return;
+  confirm2(
+    'Deshacer pago',
+    `¿Eliminar el pago de ${getCurrency()}${fmtN(pay.amount)} del ${pay.date}? La deuda volverá a estar pendiente.`,
+    () => {
+      sale.payments = sale.payments.filter(p => p.id !== paymentId);
+      sale.amountPaid = sale.payments.reduce((a, p) => a + p.amount, 0);
+      sale.paid = sale.amountPaid >= sale.total - 0.001;
+      if (sale.paid) sale.amountPaid = sale.total;
+      DB.set('sales', sales);
+      logAction('pagos', 'Pago eliminado', `${getCurrency()}${fmtN(pay.amount)}${pay.note ? ' — ' + pay.note : ''}`);
+      showToast('Pago eliminado — deuda restaurada');
+      renderClients();
+      renderSalesHistory();
+      openPaymentModal(saleId, _paymentClientId);
+      if (_paymentClientId) {
+        const detailEl = document.getElementById('clientDetailModal');
+        if (detailEl && !detailEl.classList.contains('hidden')) {
+          openClientDetail(_paymentClientId);
+          switchClientTab('deudas');
+          openModal('paymentModal');
+        }
+      }
+    }
+  );
 }
 
 // ─── SALES ──────────────────────────────────
