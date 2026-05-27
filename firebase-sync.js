@@ -115,6 +115,26 @@ const CloudSync = {
     }
   },
 
+  // Crea un documento limpio y vacío para una cuenta nueva
+  async pushFresh(username, userRecord, storeName) {
+    if (!this.enabled || !username) return;
+    try {
+      const db = firebase.firestore();
+      await db.collection(this.COLLECTION).doc(this._docId(username)).set({
+        syncedAt: new Date().toISOString(),
+        users: [userRecord],
+        config: { storeName: storeName || 'LUMIÈRE' },
+        products: [],
+        clients: [],
+        sales: [],
+        activityLog: [],
+        navLabels: [],
+      });
+    } catch(e) {
+      console.warn('[CloudSync] Error al crear tienda en la nube:', e.message);
+    }
+  },
+
   // Muestra el estado inicial cuando el usuario inicia sesión
   showInitialStatus() {
     const el = document.getElementById('cloudSyncStatus');

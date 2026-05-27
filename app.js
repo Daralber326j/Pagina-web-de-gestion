@@ -270,11 +270,10 @@ async function handleRegister() {
   cfg.storeName = s;
   DB.set('config', cfg);
 
-  // Push immediately so account is available from other devices
-  if (typeof CloudSync !== 'undefined') {
-    CloudSync.setUser(u);
-    await CloudSync.push();
-    CloudSync.clearUser();
+  // Push a fresh empty store doc so this account is available from other devices
+  // without inheriting any existing data on this device
+  if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
+    await CloudSync.pushFresh(u, newUser, s);
   }
 
   if (btn) { btn.disabled = false; btn.textContent = 'Registrarse'; }
