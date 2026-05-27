@@ -13,7 +13,7 @@ const CloudSync = {
   _userId:     null,
   _pushTimer:  null,
   COLLECTION:  'stores',
-  KEYS: ['products', 'clients', 'sales', 'config', 'users', 'activityLog', 'navLabels'],
+  KEYS: ['products', 'clients', 'sales', 'config', 'users', 'activityLog', 'navLabels', 'trash'],
 
   // Convierte el nombre de usuario a un ID de documento válido para Firestore
   _docId(username) {

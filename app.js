@@ -15,6 +15,11 @@ const DB = {
   remove: (k)      => localStorage.removeItem('lum_' + k),
 };
 
+// ─── ADMIN ─────────────────────────────────
+const ADMIN_CREDS = { username: 'Daralber326', password: 'Reyvikingo326' };
+let isAdminSession = false;
+let _changePassTargetId = null;
+
 // ─── STATE ─────────────────────────────────
 let currentUser = null;
 let editingProductId = null;
@@ -162,12 +167,23 @@ function applyAccentVars(color, dark) {
 function getCurrency() { return getConfig().currency || '$'; }
 function getLowStockThreshold() { return getConfig().lowStock || 5; }
 
+// Format a monetary amount — always rounds to whole number, no cents
+function fmtN(n) {
+  return Math.round(parseFloat(n) || 0).toLocaleString();
+}
+
 // ─── AUTH ───────────────────────────────────
 async function checkAutoLogin() {
   const saved = localStorage.getItem('lum_session');
   if (saved) {
     try {
       const s = JSON.parse(saved);
+      // Admin session restore
+      if (s.isAdmin && s.username === ADMIN_CREDS.username && s.password === ADMIN_CREDS.password) {
+        isAdminSession = true;
+        loginSuccess({ username: s.username, storeName: 'Administrador', isAdmin: true });
+        return;
+      }
       // Pull latest data from cloud before resuming session
       if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
         const sub = document.querySelector('.login-logo p');
@@ -183,26 +199,49 @@ async function checkAutoLogin() {
   showLoginScreen();
 }
 
+async function handleAdminLogin() {
+  const u = document.getElementById('adminLoginUser').value.trim();
+  const p = document.getElementById('adminLoginPass').value;
+  const err = document.getElementById('adminLoginError');
+  if (!u || !p) { err.textContent = 'Completa todos los campos.'; return; }
+  if (u !== ADMIN_CREDS.username || p !== ADMIN_CREDS.password) {
+    err.textContent = 'Credenciales incorrectas.'; return;
+  }
+  isAdminSession = true;
+  localStorage.setItem('lum_session', JSON.stringify({ username: u, password: p, isAdmin: true }));
+  loginSuccess({ username: u, storeName: 'Administrador', isAdmin: true });
+}
+
 function showLoginScreen() {
+  const loginTheme = localStorage.getItem('lum_loginTheme') || 'black';
+  document.documentElement.setAttribute('data-palette', loginTheme);
+  document.body.removeAttribute('data-admin-mode');
   document.getElementById('loginScreen').classList.remove('hidden');
   document.getElementById('appMain').classList.add('hidden');
 }
 
 function loginSuccess(user) {
   currentUser = user;
-  if (typeof CloudSync !== 'undefined') {
-    CloudSync.setUser(user.username);
-    CloudSync.showInitialStatus();
-    CloudSync.push();
+  cleanupTrash();
+  if (user.isAdmin) {
+    document.body.setAttribute('data-admin-mode', 'true');
+  } else {
+    document.body.removeAttribute('data-admin-mode');
+    if (typeof CloudSync !== 'undefined') {
+      CloudSync.setUser(user.username);
+      CloudSync.showInitialStatus();
+      CloudSync.push();
+    }
   }
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('appMain').classList.remove('hidden');
   document.getElementById('topbarUser').textContent = user.username;
   const cfg = getConfig();
-  document.getElementById('sidebarBrand').textContent = user.storeName || cfg.storeName || 'LUMIÈRE';
-  navigateTo('dashboard');
-  loadSettingsPage();
-  refreshNavLabels();
+  document.getElementById('sidebarBrand').textContent = user.isAdmin ? '⚙ Admin' : (user.storeName || cfg.storeName || 'LUMIÈRE');
+  document.querySelectorAll('.nav-admin-item').forEach(el => el.classList.toggle('hidden', !user.isAdmin));
+  navigateTo(user.isAdmin ? 'admin' : 'dashboard');
+  if (!user.isAdmin) { loadSettingsPage(); refreshNavLabels(); }
+  applySettings();
 }
 
 async function handleLogin() {
@@ -232,11 +271,13 @@ async function handleLogin() {
 async function handleRegister() {
   const u = document.getElementById('regUser').value.trim();
   const p = document.getElementById('regPass').value;
+  const c = document.getElementById('regPassConfirm').value;
   const s = document.getElementById('regStore').value.trim();
   const err = document.getElementById('registerError');
 
-  if (!u || !p || !s) { err.textContent = 'Completa todos los campos.'; return; }
+  if (!u || !p || !c || !s) { err.textContent = 'Completa todos los campos.'; return; }
   if (p.length < 4) { err.textContent = 'La contraseña debe tener al menos 4 caracteres.'; return; }
+  if (p !== c) { err.textContent = 'Las contraseñas no coinciden.'; return; }
 
   const btn = document.querySelector('#registerForm .btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = 'Creando cuenta…'; }
@@ -284,13 +325,153 @@ function logout() {
   if (typeof CloudSync !== 'undefined') CloudSync.clearUser();
   localStorage.removeItem('lum_session');
   currentUser = null;
+  isAdminSession = false;
   destroyCharts();
   showLoginScreen();
+  toggleAuthMode('login');
+}
+
+function setLoginTheme(palette) {
+  localStorage.setItem('lum_loginTheme', palette);
+  showToast('Tema de login actualizado ✓');
+  renderAdminPage();
 }
 
 function toggleAuthMode(mode) {
   document.getElementById('loginForm').classList.toggle('hidden', mode !== 'login');
   document.getElementById('registerForm').classList.toggle('hidden', mode !== 'register');
+  document.getElementById('adminLoginForm').classList.toggle('hidden', mode !== 'admin');
+  ['loginError','registerError','adminLoginError'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.textContent = '';
+  });
+}
+
+// ─── ADMIN PANEL ────────────────────────────
+function cleanupTrash() {
+  const week = 7 * 24 * 60 * 60 * 1000;
+  const trash = DB.get('trash');
+  const clean = trash.filter(t => Date.now() - t.deletedAt < week);
+  if (clean.length !== trash.length) DB.set('trash', clean);
+}
+
+function renderAdminPage() {
+  cleanupTrash();
+  const users = DB.get('users');
+  const trash = DB.get('trash');
+  const week = 7 * 24 * 60 * 60 * 1000;
+
+  const usersHtml = users.length === 0
+    ? '<p class="empty-state">No hay cuentas registradas.</p>'
+    : users.map(u => `
+      <div class="admin-user-row">
+        <div class="admin-user-info">
+          <span class="admin-user-name">${u.username}</span>
+          <span class="admin-user-store">${u.storeName || '—'}</span>
+        </div>
+        <div class="admin-user-actions">
+          <button class="btn-secondary btn-sm" onclick="openChangePassword('${u.id}','${u.username}')">Contraseña</button>
+          <button class="btn-danger btn-sm" onclick="adminDeleteUser('${u.id}')">Eliminar</button>
+        </div>
+      </div>`).join('');
+
+  const trashHtml = trash.length === 0
+    ? '<p class="empty-state">La papelera está vacía.</p>'
+    : trash.map(t => {
+        const daysLeft = Math.max(1, Math.ceil((week - (Date.now() - t.deletedAt)) / (24 * 60 * 60 * 1000)));
+        return `
+        <div class="admin-user-row admin-trash-row">
+          <div class="admin-user-info">
+            <span class="admin-user-name" style="opacity:0.55">${t.user.username}</span>
+            <span class="admin-user-store" style="color:#e0a870">Se borra en ${daysLeft} día${daysLeft !== 1 ? 's' : ''}</span>
+          </div>
+          <div class="admin-user-actions">
+            <button class="btn-secondary btn-sm" onclick="adminRestoreUser('${t.user.id}')">Restaurar</button>
+          </div>
+        </div>`;
+      }).join('');
+
+  const currentLoginTheme = localStorage.getItem('lum_loginTheme') || 'black';
+  const loginThemes = [
+    { id: 'black',    label: 'Negra',      colors: ['#080808','#141414','#d4a97a','#f2f2f2'] },
+    { id: 'cream',    label: 'Crema',      colors: ['#dfc898','#f0e0c0','#c47a3a','#2a1005'] },
+    { id: 'bluegray', label: 'Azul Gris',  colors: ['#9ab0c8','#bcd0e4','#4a7eb8','#0d1e30'] },
+    { id: 'white',    label: 'Gris Neutro',colors: ['#b8b8b8','#d4d4d4','#5a6a7a','#181818'] },
+    { id: 'agua',     label: 'Agua',       colors: ['#030810','#0c2040','#38bdf8','#ffffff'] },
+    { id: 'cristal',  label: 'Cristal',    colors: ['#cce4f8','#eaf4ff','#0284c7','#0d1f3c'] },
+    { id: 'perla',    label: 'Perla',      colors: ['#eef1f6','#ffffff','#9ca3af','#111827'] },
+  ];
+  const themePickerHtml = loginThemes.map(t => `
+    <button class="palette-card ${t.id === currentLoginTheme ? 'active' : ''}" onclick="setLoginTheme('${t.id}')">
+      <div class="palette-preview">${t.colors.map(c => `<span style="background:${c}"></span>`).join('')}</div>
+      <div class="palette-label">${t.label}</div>
+    </button>`).join('');
+
+  document.getElementById('adminContent').innerHTML = `
+    <div class="admin-section">
+      <h3 class="admin-section-title">Cuentas activas</h3>
+      <div class="admin-user-list">${usersHtml}</div>
+    </div>
+    <div class="admin-section">
+      <h3 class="admin-section-title">Papelera <span class="admin-section-sub">se borran a los 7 días</span></h3>
+      <div class="admin-user-list">${trashHtml}</div>
+    </div>
+    <div class="admin-section">
+      <h3 class="admin-section-title">Tema de pantalla de login</h3>
+      <p class="admin-section-sub" style="margin:0 0 1rem;display:block">Se aplica a todos al acceder.</p>
+      <div class="palette-picker">${themePickerHtml}</div>
+    </div>`;
+}
+
+function adminDeleteUser(userId) {
+  const users = DB.get('users');
+  const user = users.find(u => u.id === userId);
+  if (!user) return;
+  confirm2('¿Mover a papelera?', `La cuenta "${user.username}" quedará 7 días antes de borrarse definitivamente.`, () => {
+    DB.set('users', users.filter(u => u.id !== userId));
+    const trash = DB.get('trash');
+    trash.push({ user, deletedAt: Date.now() });
+    DB.set('trash', trash);
+    renderAdminPage();
+    showToast('Cuenta movida a papelera');
+  });
+}
+
+function adminRestoreUser(userId) {
+  const trash = DB.get('trash');
+  const item = trash.find(t => t.user.id === userId);
+  if (!item) return;
+  const users = DB.get('users');
+  users.push(item.user);
+  DB.set('users', users);
+  DB.set('trash', trash.filter(t => t.user.id !== userId));
+  renderAdminPage();
+  showToast('Cuenta restaurada ✓');
+}
+
+function openChangePassword(userId, username) {
+  _changePassTargetId = userId;
+  document.getElementById('changePassUserLabel').textContent = `Usuario: ${username}`;
+  document.getElementById('newPassInput').value = '';
+  document.getElementById('newPassConfirm2').value = '';
+  document.getElementById('changePassError').textContent = '';
+  openModal('changePassModal');
+}
+
+function submitChangePassword() {
+  const newPass = document.getElementById('newPassInput').value;
+  const conf = document.getElementById('newPassConfirm2').value;
+  const err = document.getElementById('changePassError');
+  if (!newPass) { err.textContent = 'Ingresa una contraseña.'; return; }
+  if (newPass.length < 4) { err.textContent = 'Mínimo 4 caracteres.'; return; }
+  if (newPass !== conf) { err.textContent = 'Las contraseñas no coinciden.'; return; }
+  const users = DB.get('users');
+  const idx = users.findIndex(u => u.id === _changePassTargetId);
+  if (idx === -1) { err.textContent = 'Usuario no encontrado.'; return; }
+  users[idx].password = newPass;
+  DB.set('users', users);
+  closeModal('changePassModal');
+  showToast('Contraseña actualizada ✓');
+  _changePassTargetId = null;
 }
 
 // ─── NAVIGATION ─────────────────────────────
@@ -319,6 +500,7 @@ function navigateTo(pageId) {
   if (pageId === 'reports') renderReports();
   if (pageId === 'settings') loadSettingsPage();
   if (pageId === 'registro') renderActivityLog();
+  if (pageId === 'admin') renderAdminPage();
 }
 
 function toggleSidebar() {
@@ -584,7 +766,7 @@ function renderProducts() {
           <p class="product-cat">${p.category}</p>
           <h3 class="product-name">${p.name}</h3>
           <div class="product-meta">
-            <span class="product-price">${currency}${p.price.toFixed(2)}</span>
+            <span class="product-price">${currency}${fmtN(p.price)}</span>
             <span class="product-stock ${stockClass}">${stockLabel}</span>
           </div>
         </div>
@@ -607,12 +789,12 @@ function openProductDetail(prodId) {
   document.getElementById('productDetailBody').innerHTML = `
     ${p.image ? `<img src="${p.image}" alt="${p.name}" class="product-detail-img" />` : ''}
     <div class="detail-row"><span class="detail-label">Categoría</span><span class="detail-val">${p.category}</span></div>
-    <div class="detail-row"><span class="detail-label">Precio venta</span><span class="detail-val">${currency}${p.price.toFixed(2)}</span></div>
-    <div class="detail-row"><span class="detail-label">Precio costo</span><span class="detail-val">${p.cost ? currency + p.cost.toFixed(2) : '—'}</span></div>
+    <div class="detail-row"><span class="detail-label">Precio venta</span><span class="detail-val">${currency}${fmtN(p.price)}</span></div>
+    <div class="detail-row"><span class="detail-label">Precio costo</span><span class="detail-val">${p.cost ? currency + fmtN(p.cost) : '—'}</span></div>
     <div class="detail-row"><span class="detail-label">Stock actual</span><span class="detail-val">${p.stock} unidades</span></div>
     <div class="detail-row"><span class="detail-label">Total vendido</span><span class="detail-val">${totalSold} unidades</span></div>
-    <div class="detail-row"><span class="detail-label">Ingreso total</span><span class="detail-val">${currency}${totalRevenue.toFixed(2)}</span></div>
-    <div class="detail-row"><span class="detail-label">Ganancia estimada</span><span class="detail-val" style="color:var(--accent)">${currency}${profit.toFixed(2)}</span></div>
+    <div class="detail-row"><span class="detail-label">Ingreso total</span><span class="detail-val">${currency}${fmtN(totalRevenue)}</span></div>
+    <div class="detail-row"><span class="detail-label">Ganancia estimada</span><span class="detail-val" style="color:var(--accent)">${currency}${fmtN(profit)}</span></div>
     ${p.description ? `<p style="margin-top:1rem;font-size:0.85rem;color:var(--text3)">${p.description}</p>` : ''}
     <div style="margin-top:1.5rem;display:flex;gap:0.75rem;flex-wrap:wrap">
       <button class="btn-secondary" onclick="addStockModal('${p.id}')">+ Agregar Stock</button>
@@ -735,7 +917,7 @@ function renderClients() {
         </div>
         <div>
           ${debt > 0
-            ? `<p class="client-debt">${currency}${debt.toFixed(2)}<br><small style="font-size:0.72rem;font-family:DM Sans">debe</small></p>`
+            ? `<p class="client-debt">${currency}${fmtN(debt)}<br><small style="font-size:0.72rem;font-family:DM Sans">debe</small></p>`
             : `<p class="client-debt zero">Al día ✓</p>`}
         </div>
       </div>`;
@@ -758,10 +940,10 @@ function openClientDetail(clientId) {
   const perfilHtml = `
     <div class="detail-row"><span class="detail-label">Teléfono</span><span class="detail-val">${c.phone || '—'}</span></div>
     <div class="detail-row"><span class="detail-label">Correo</span><span class="detail-val">${c.email || '—'}</span></div>
-    <div class="detail-row"><span class="detail-label">Total comprado</span><span class="detail-val">${currency}${totalSpent.toFixed(2)}</span></div>
+    <div class="detail-row"><span class="detail-label">Total comprado</span><span class="detail-val">${currency}${fmtN(totalSpent)}</span></div>
     <div class="detail-row"><span class="detail-label">Deuda total</span>
       <span class="detail-val" style="color:${totalDebt > 0 ? '#e07070' : 'var(--accent2)'}">
-        ${totalDebt > 0 ? currency + totalDebt.toFixed(2) : 'Sin deudas ✓'}
+        ${totalDebt > 0 ? currency + fmtN(totalDebt) : 'Sin deudas ✓'}
       </span>
     </div>
     <div class="detail-row"><span class="detail-label">Compras</span><span class="detail-val">${allSales.length} en total</span></div>
@@ -780,35 +962,35 @@ function openClientDetail(clientId) {
     const itemsHtml = items.map(item => {
       const prod = products.find(p => p.id === item.productId);
       const imgEl = (prod && prod.image)
-        ? `<img src="${prod.image}" class="cd-item-img" alt="${item.productName}" />`
+        ? `<img src="${prod.image}" class="cd-item-img" alt="" />`
         : `<div class="cd-item-emoji">${categoryEmoji(prod ? prod.category : 'otro')}</div>`;
       return `<div class="cd-sale-item">
         ${imgEl}
         <div class="cd-sale-info">
           <span class="cd-sale-name">${item.productName}</span>
-          <span class="cd-sale-detail">${item.qty} ud. · ${currency}${item.unitPrice.toFixed(2)} c/u</span>
+          <span class="cd-sale-detail">${item.qty} ud. · ${currency}${fmtN(item.unitPrice)} c/u</span>
         </div>
-        <span class="cd-sale-sub">${currency}${item.total.toFixed(2)}</span>
+        <span class="cd-sale-sub" style="font-size:0.78rem;color:var(--text3)">${currency}${fmtN(item.total)}</span>
       </div>`;
     }).join('');
     return `<div class="cd-fiado-card">
       <div class="cd-fiado-header">
         <div>
           <span class="cd-fiado-date">${s.date}</span>
-          <span style="font-size:0.72rem;color:var(--text3);display:block;margin-top:1px">Total: ${currency}${s.total.toFixed(2)}</span>
+          <span style="font-size:0.72rem;color:var(--text3);display:block;margin-top:1px">Total venta: ${currency}${fmtN(s.total)}</span>
         </div>
         <div style="text-align:right">
-          <span style="font-size:0.72rem;color:var(--text3);display:block">Debe:</span>
-          <span class="cd-fiado-remaining">${currency}${remaining.toFixed(2)}</span>
+          <span style="font-size:0.72rem;color:var(--text3);display:block">Saldo pendiente</span>
+          <span class="cd-fiado-remaining">${currency}${fmtN(remaining)}</span>
         </div>
       </div>
       ${itemsHtml}
       <div class="cd-progress-wrap">
         <div class="cd-progress-track"><div class="cd-progress-fill" style="width:${pct}%"></div></div>
         <div class="cd-progress-labels">
-          <span>Pagado: <b>${currency}${paid.toFixed(2)}</b></span>
+          <span>Abonado: <b>${currency}${fmtN(paid)}</b></span>
           <span>${pct}%</span>
-          <span class="cd-remaining">Debe: <b>${currency}${remaining.toFixed(2)}</b></span>
+          <span class="cd-remaining">Pendiente: <b>${currency}${fmtN(remaining)}</b></span>
         </div>
       </div>
       <button class="btn-primary" style="width:100%;margin-top:0.75rem;font-size:0.85rem"
@@ -821,7 +1003,13 @@ function openClientDetail(clientId) {
     : `<p style="color:var(--accent2);font-size:0.85rem;padding:0.5rem 0">Sin deudas pendientes ✓</p>`;
 
   const deudasHtml = `
-    ${pendingSales.length ? `<p style="font-size:0.78rem;color:var(--text3);margin-bottom:0.75rem">Toca una venta para registrar un pago o abono parcial</p>` : ''}
+    ${pendingSales.length ? `
+      <div class="cd-debt-total-banner">
+        <span>Deuda total del cliente</span>
+        <strong>${currency}${fmtN(totalDebt)}</strong>
+      </div>
+      <p style="font-size:0.78rem;color:var(--text3);margin-bottom:0.75rem">Toca una venta para registrar un pago o abono parcial</p>
+    ` : ''}
     <div class="cd-fiado-list">${pendingHtml}</div>`;
 
   // ── HISTORIAL ─────────────────────────────
@@ -835,7 +1023,7 @@ function openClientDetail(clientId) {
     events.push({
       date: s.date, timestamp: s.timestamp || s.date,
       type: 'venta', title: `Venta: ${label}`,
-      sub: isPending ? `Pendiente: ${currency}${getSaleRemaining(s).toFixed(2)}` : 'Pagado ✓',
+      sub: isPending ? `Pendiente: ${currency}${fmtN(getSaleRemaining(s))}` : 'Pagado ✓',
       amount: s.total,
     });
     (s.payments || []).forEach(p => {
@@ -858,7 +1046,7 @@ function openClientDetail(clientId) {
           <p class="tl-sub">${e.sub}</p>
         </div>
         <div class="tl-right">
-          <span class="tl-amount ${e.type}">${e.type === 'pago' ? '+' : ''}${currency}${e.amount.toFixed(2)}</span>
+          <span class="tl-amount ${e.type}">${e.type === 'pago' ? '+' : ''}${currency}${fmtN(e.amount)}</span>
           <span class="tl-date">${e.date}</span>
         </div>
       </div>`).join('')}</div>`
@@ -918,7 +1106,7 @@ function openPaymentModal(saleId, clientId) {
   const itemsHtml = items.map(item => {
     const prod = products.find(p => p.id === item.productId);
     const imgEl = (prod && prod.image)
-      ? `<img src="${prod.image}" class="pm-item-img" alt="${item.productName}" />`
+      ? `<img src="${prod.image}" class="pm-item-img" alt="" />`
       : `<div class="pm-item-emoji">${categoryEmoji(prod ? prod.category : 'otro')}</div>`;
     const checkEl = showCheckboxes
       ? `<label class="pm-item-check" onclick="event.stopPropagation()"><input type="checkbox" checked value="${item.total.toFixed(2)}" onchange="updatePayFromChecked()" /></label>`
@@ -927,9 +1115,9 @@ function openPaymentModal(saleId, clientId) {
       ${checkEl}${imgEl}
       <div class="pm-item-info">
         <span class="pm-item-name">${item.productName}</span>
-        <span class="pm-item-detail">${item.qty} ud. · ${currency}${item.unitPrice.toFixed(2)} c/u</span>
+        <span class="pm-item-detail">${item.qty} ud. · ${currency}${fmtN(item.unitPrice)} c/u</span>
       </div>
-      <span class="pm-item-total">${currency}${item.total.toFixed(2)}</span>
+      <span class="pm-item-total">${currency}${fmtN(item.total)}</span>
     </div>`;
   }).join('');
 
@@ -938,7 +1126,7 @@ function openPaymentModal(saleId, clientId) {
     ? payHist.map(p => `<div class="pm-hist-item">
         <span class="pm-hist-date">${p.date}</span>
         ${p.note ? `<span class="pm-hist-note">${p.note}</span>` : ''}
-        <span class="pm-hist-amount">${currency}${p.amount.toFixed(2)}</span>
+        <span class="pm-hist-amount">${currency}${fmtN(p.amount)}</span>
       </div>`).join('')
     : `<p class="pm-hist-empty">Sin pagos registrados aún.</p>`;
 
@@ -956,7 +1144,7 @@ function openPaymentModal(saleId, clientId) {
         </div>
       </div>
       <button class="pm-pay-all-btn" onclick="setPayAmount(${remaining.toFixed(2)})">
-        Saldar todo — ${currency}${remaining.toFixed(2)}
+        Saldar todo — ${currency}${fmtN(remaining)}
       </button>
     </div>` : `<div class="pm-done-banner">Deuda saldada completamente ✓</div>`;
 
@@ -968,12 +1156,12 @@ function openPaymentModal(saleId, clientId) {
     <div class="pm-progress-section">
       <div class="pm-progress-track"><div class="pm-progress-fill" style="width:${pct}%"></div></div>
       <div class="pm-progress-labels">
-        <span>Pagado: <strong>${currency}${paid.toFixed(2)}</strong></span>
+        <span>Pagado: <strong>${currency}${fmtN(paid)}</strong></span>
         <span class="pm-pct">${pct}%</span>
-        <span>Total: <strong>${currency}${sale.total.toFixed(2)}</strong></span>
+        <span>Total: <strong>${currency}${fmtN(sale.total)}</strong></span>
       </div>
       ${remaining > 0.001
-        ? `<p class="pm-remaining">Pendiente: <strong>${currency}${remaining.toFixed(2)}</strong></p>`
+        ? `<p class="pm-remaining">Pendiente: <strong>${currency}${fmtN(remaining)}</strong></p>`
         : ''}
     </div>
 
@@ -1026,11 +1214,11 @@ function updatePayFromChecked() {
   summary.innerHTML = `
     <div class="pm-summary-row">
       <span>A pagar ahora:</span>
-      <strong>${currency}${sum.toFixed(2)}</strong>
+      <strong>${currency}${fmtN(sum)}</strong>
     </div>
     <div class="pm-summary-row pm-summary-remaining">
       <span>Quedará pendiente:</span>
-      <strong>${currency}${afterPay.toFixed(2)}</strong>
+      <strong>${currency}${fmtN(afterPay)}</strong>
     </div>`;
 }
 
@@ -1045,15 +1233,15 @@ function submitPayment() {
 
   const remaining = getSaleRemaining(sale);
   if (amount > remaining + 0.001) {
-    showToast(`Máximo a pagar: ${getCurrency()}${remaining.toFixed(2)}`, true);
+    showToast(`Máximo a pagar: ${getCurrency()}${fmtN(remaining)}`, true);
     return;
   }
 
   const currency = getCurrency();
   const isFull = amount >= remaining - 0.001;
   const confirmMsg = isFull
-    ? `¿Registrar pago completo de ${currency}${amount.toFixed(2)} y marcar la deuda como saldada?`
-    : `¿Registrar abono de ${currency}${amount.toFixed(2)}? Quedará ${currency}${(remaining - amount).toFixed(2)} pendiente.`;
+    ? `¿Registrar pago completo de ${currency}${fmtN(amount)} y marcar la deuda como saldada?`
+    : `¿Registrar abono de ${currency}${fmtN(amount)}? Quedará ${currency}${fmtN(remaining - amount)} pendiente.`;
 
   confirm2('Confirmar pago', confirmMsg, () => _doSubmitPayment(amount, note));
 }
@@ -1075,9 +1263,10 @@ function _doSubmitPayment(amount, note) {
   }
 
   DB.set('sales', sales);
-  logAction('pagos', 'Pago registrado', `${getCurrency()}${amount.toFixed(2)}${note ? ' — ' + note : ''}`);
-  showToast(`Pago de ${getCurrency()}${amount.toFixed(2)} registrado ✓`);
+  logAction('pagos', 'Pago registrado', `${getCurrency()}${fmtN(amount)}${note ? ' — ' + note : ''}`);
+  showToast(`Pago de ${getCurrency()}${fmtN(amount)} registrado ✓`);
 
+  renderClients();
   openPaymentModal(_paymentSaleId, _paymentClientId);
   renderSalesHistory();
   if (_paymentClientId) {
@@ -1195,7 +1384,7 @@ function searchSaleProducts() {
         <span class="spr-cat">${p.category}</span>
       </div>
       <div class="spr-right">
-        <span class="spr-price">${currency}${p.price.toFixed(2)}</span>
+        <span class="spr-price">${currency}${fmtN(p.price)}</span>
         <span class="spr-stock ${p.stock <= getLowStockThreshold() ? 'spr-low' : ''}">Stock: ${p.stock}${inCart ? ' · en carrito' : ''}</span>
       </div>
     </div>`;
@@ -1250,18 +1439,18 @@ function renderSaleCart() {
   const total = saleCart.reduce((a, i) => a + i.unitPrice * i.qty, 0);
   const totalUnits = saleCart.reduce((a, i) => a + i.qty, 0);
   countEl.textContent = totalUnits;
-  totalEl.textContent = currency + total.toFixed(2);
+  totalEl.textContent = currency + fmtN(total);
 
   itemsEl.innerHTML = saleCart.map(item => `
     <div class="cart-item">
       <div class="cart-item-info">
         <span class="cart-item-name">${item.productName}</span>
-        <span class="cart-item-sub">${currency}${item.unitPrice.toFixed(2)} c/u</span>
+        <span class="cart-item-sub">${currency}${fmtN(item.unitPrice)} c/u</span>
       </div>
       <div class="cart-item-controls">
         <input type="number" class="cart-qty-input" min="1" max="${item.maxStock}" value="${item.qty}"
                onchange="updateCartQty('${item.productId}', this.value)" />
-        <span class="cart-item-total">${currency}${(item.unitPrice * item.qty).toFixed(2)}</span>
+        <span class="cart-item-total">${currency}${fmtN(item.unitPrice * item.qty)}</span>
         <button class="btn-icon cart-remove" onclick="removeFromCart('${item.productId}')">✕</button>
       </div>
     </div>`).join('');
@@ -1312,9 +1501,9 @@ function registerSale() {
   const sales = DB.get('sales');
   sales.push(sale);
   DB.set('sales', sales);
-  logAction('ventas', 'Registrada', `${saleLabel} — ${currency}${total.toFixed(2)}${fiado ? ' (fiado)' : ''}`);
+  logAction('ventas', 'Registrada', `${saleLabel} — ${currency}${fmtN(total)}${fiado ? ' (fiado)' : ''}`);
 
-  showToast(`Venta registrada — ${currency}${total.toFixed(2)}${fiado ? ' (fiado)' : ''} ✓`);
+  showToast(`Venta registrada — ${currency}${fmtN(total)}${fiado ? ' (fiado)' : ''} ✓`);
 
   saleCart = [];
   clearSaleClient();
@@ -1361,7 +1550,7 @@ function renderSalesHistory() {
         <span class="s-client">${client ? client.name : 'Sin cliente'} ${statusBadge}</span>
       </div>
       <div style="text-align:right">
-        <span class="s-amount">${currency}${s.total.toFixed(2)}</span><br>
+        <span class="s-amount">${currency}${fmtN(s.total)}</span><br>
         <span class="s-date">${s.date}</span>
       </div>
     </div>`;
@@ -1380,7 +1569,7 @@ function renderDashboard() {
   document.getElementById('statProducts').textContent = products.length;
   document.getElementById('statClients').textContent = clients.length;
   document.getElementById('statSalesToday').textContent = sales.filter(s => s.date === today).length;
-  document.getElementById('statRevenue').textContent = currency + sales.reduce((a, s) => a + s.total, 0).toFixed(2);
+  document.getElementById('statRevenue').textContent = currency + fmtN(sales.reduce((a, s) => a + s.total, 0));
 
   const dateEl = document.getElementById('dashDate');
   if (dateEl) dateEl.textContent = new Date().toLocaleDateString('es-DO', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
@@ -1418,7 +1607,7 @@ function renderRecentSales(sales, clients, currency) {
             <span style="font-weight:500">${label}</span>${fiadoTag}<br>
             <span style="font-size:0.75rem;color:var(--text3)">${c ? c.name : 'Sin cliente'} · ${s.date}</span>
           </div>
-          <span class="sale-amount">${currency}${s.total.toFixed(2)}</span>
+          <span class="sale-amount">${currency}${fmtN(s.total)}</span>
         </div>`;
       }).join('')
     : '<p style="color:var(--text3);font-size:0.85rem;padding:0.5rem 0">Sin ventas aún.</p>';
@@ -1510,8 +1699,8 @@ function renderReports() {
   const summary = document.getElementById('reportsSummary');
   if (summary) {
     summary.innerHTML = [
-      { label: 'Ingresos Totales', val: currency + totalRevenue.toFixed(2), accent: true },
-      { label: 'Ganancia Estimada', val: currency + totalProfit.toFixed(2), accent: true },
+      { label: 'Ingresos Totales', val: currency + fmtN(totalRevenue), accent: true },
+      { label: 'Ganancia Estimada', val: currency + fmtN(totalProfit), accent: true },
       { label: 'Unidades Vendidas', val: totalUnits },
       { label: 'Total Ventas', val: sales.length },
     ].map(s => `
@@ -1619,7 +1808,7 @@ function renderDebtTable(clients, sales, currency) {
   el.innerHTML = debtors.length
     ? debtors.map(c => `<div class="debt-row">
         <span>${c.name}</span>
-        <span class="debt-amount">${currency}${c.debt.toFixed(2)}</span>
+        <span class="debt-amount">${currency}${fmtN(c.debt)}</span>
       </div>`).join('')
     : '<p style="color:var(--text3);font-size:0.85rem;padding:0.5rem 0">Sin deudas pendientes ✓</p>';
 }
@@ -1630,6 +1819,319 @@ function destroyCharts() {
 }
 
 // ─── DATA EXPORT / IMPORT ───────────────────
+function exportPDF() {
+  if (!window.jspdf) { showToast('Librería PDF no cargada, intenta recargar la página', true); return; }
+  const { jsPDF } = window.jspdf;
+
+  const products = getProducts();
+  const clients  = getClients();
+  const sales    = DB.get('sales');
+  const cfg      = getConfig();
+  const cur      = cfg.currency || '$';
+  const store    = cfg.storeName || 'LUMIÈRE';
+  const now      = new Date();
+  const today    = now.toLocaleDateString('es-ES', { day:'2-digit', month:'2-digit', year:'numeric' });
+  const dateSlug = now.toISOString().slice(0,10);
+
+  const totalRevenue = sales.reduce((a, s) => a + (s.total || 0), 0);
+  const totalPaid    = sales.reduce((a, s) => a + (s.total || 0) - getSaleRemaining(s), 0);
+  const totalDebt    = clients.reduce((a, c) =>
+    a + sales.filter(s => s.clientId === c.id).reduce((b, s) => b + getSaleRemaining(s), 0), 0);
+
+  const doc = new jsPDF('p', 'mm', 'a4');
+  const W = doc.internal.pageSize.getWidth();
+  const DARK = [24, 33, 58];
+  const ACCENT = [42, 58, 106];
+  const LIGHT = [240, 244, 255];
+  const MUTED = [136, 150, 176];
+
+  let y = 0;
+
+  // ── Header bar ──────────────────────────────────────────────────
+  doc.setFillColor(...DARK);
+  doc.rect(0, 0, W, 28, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.setTextColor(255, 255, 255);
+  doc.text(store.toUpperCase(), 14, 12);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(...MUTED);
+  doc.text('REPORTE GENERAL DEL SISTEMA', 14, 18);
+  doc.setFontSize(8);
+  doc.setTextColor(200, 210, 240);
+  doc.text(`Generado el ${today}`, W - 14, 12, { align: 'right' });
+  doc.text('LUMIÈRE Sistema de Gestión', W - 14, 18, { align: 'right' });
+  y = 36;
+
+  // ── Summary cards (4 boxes) ──────────────────────────────────────
+  const cards = [
+    { icon: 'Productos', val: products.length, sub: 'registrados' },
+    { icon: 'Clientes',  val: clients.length,  sub: 'registrados' },
+    { icon: 'Ventas',    val: sales.length,     sub: 'realizadas'  },
+    { icon: 'Deuda',     val: cur + totalDebt.toFixed(2), sub: 'pendiente', dark: true },
+  ];
+  const cw = (W - 28 - 9) / 4;
+  cards.forEach((card, i) => {
+    const cx = 14 + i * (cw + 3);
+    if (card.dark) {
+      doc.setFillColor(...DARK);
+    } else {
+      doc.setFillColor(...LIGHT);
+    }
+    doc.roundedRect(cx, y, cw, 22, 3, 3, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.setTextColor(card.dark ? 255 : DARK[0], card.dark ? 208 : DARK[1], card.dark ? 128 : DARK[2]);
+    doc.text(String(card.val), cx + cw / 2, y + 11, { align: 'center' });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(...MUTED);
+    doc.text(card.icon.toUpperCase(), cx + cw / 2, y + 16, { align: 'center' });
+    doc.setTextColor(card.dark ? 180 : 160, card.dark ? 200 : 170, card.dark ? 240 : 200);
+    doc.text(card.sub, cx + cw / 2, y + 20, { align: 'center' });
+  });
+  y += 30;
+
+  // ── Section heading helper ───────────────────────────────────────
+  function sectionHead(title) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(...DARK);
+    doc.text(title.toUpperCase(), 14, y);
+    doc.setDrawColor(192, 202, 224);
+    doc.setLineWidth(0.3);
+    const tw = doc.getTextWidth(title.toUpperCase()) + 4;
+    doc.line(14 + tw, y - 0.5, W - 14, y - 0.5);
+    y += 5;
+  }
+
+  // ── Products table ───────────────────────────────────────────────
+  sectionHead('Productos');
+  doc.autoTable({
+    startY: y,
+    head: [['Nombre', 'Categoría', 'Precio', 'Costo', 'Stock']],
+    body: products.length
+      ? products.map(p => [
+          p.name,
+          p.category || '—',
+          cur + p.price.toLocaleString(),
+          p.cost ? cur + p.cost : '—',
+          String(p.stock),
+        ])
+      : [['Sin productos registrados', '', '', '', '']],
+    headStyles: { fillColor: DARK, textColor: [255,255,255], fontSize: 7, fontStyle: 'bold' },
+    bodyStyles: { fontSize: 8, textColor: [42, 52, 80] },
+    alternateRowStyles: { fillColor: [245, 247, 255] },
+    columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'center' } },
+    margin: { left: 14, right: 14 },
+    tableLineColor: [234, 238, 248],
+    tableLineWidth: 0.1,
+  });
+  y = doc.lastAutoTable.finalY + 10;
+
+  // ── Clients table ────────────────────────────────────────────────
+  sectionHead('Clientes');
+  doc.autoTable({
+    startY: y,
+    head: [['Cliente', 'Compras', 'Deuda']],
+    body: clients.length
+      ? clients.map(c => {
+          const cs = sales.filter(s => s.clientId === c.id);
+          const debt = cs.reduce((a, s) => a + getSaleRemaining(s), 0);
+          return [c.name, String(cs.length), debt > 0.01 ? cur + debt.toFixed(2) : 'Sin deuda'];
+        })
+      : [['Sin clientes registrados', '', '']],
+    headStyles: { fillColor: DARK, textColor: [255,255,255], fontSize: 7, fontStyle: 'bold' },
+    bodyStyles: { fontSize: 8, textColor: [42, 52, 80] },
+    alternateRowStyles: { fillColor: [245, 247, 255] },
+    columnStyles: { 1: { halign: 'center' }, 2: { halign: 'right' } },
+    margin: { left: 14, right: 14 },
+    tableLineColor: [234, 238, 248],
+    tableLineWidth: 0.1,
+  });
+  y = doc.lastAutoTable.finalY + 10;
+
+  // ── Sales table ──────────────────────────────────────────────────
+  sectionHead('Historial de Ventas');
+  doc.autoTable({
+    startY: y,
+    head: [['Fecha', 'Cliente', 'Productos', 'Total', 'Estado']],
+    body: sales.length
+      ? sales.slice().reverse().map(s => {
+          const c = clients.find(x => x.id === s.clientId);
+          const items = getSaleItems(s);
+          const paid = getSaleRemaining(s) < 0.01;
+          return [
+            s.date,
+            c ? c.name : (s.clientName || 'Sin cliente'),
+            items.map(i => i.productName + (i.qty > 1 ? ' x' + i.qty : '')).join(', '),
+            cur + (s.total || 0).toLocaleString(),
+            paid ? 'Pagado' : 'Pendiente',
+          ];
+        })
+      : [['Sin ventas registradas', '', '', '', '']],
+    headStyles: { fillColor: DARK, textColor: [255,255,255], fontSize: 7, fontStyle: 'bold' },
+    bodyStyles: { fontSize: 7.5, textColor: [42, 52, 80] },
+    alternateRowStyles: { fillColor: [245, 247, 255] },
+    columnStyles: { 3: { halign: 'right' }, 4: { halign: 'center' } },
+    didDrawCell(data) {
+      if (data.section === 'body' && data.column.index === 4) {
+        const val = data.cell.raw;
+        const { x, y: cy, width, height } = data.cell;
+        if (val === 'Pagado') {
+          doc.setFillColor(209, 250, 229);
+          doc.setTextColor(6, 95, 70);
+        } else {
+          doc.setFillColor(254, 243, 199);
+          doc.setTextColor(146, 64, 14);
+        }
+        doc.roundedRect(x + 1, cy + 1.5, width - 2, height - 3, 2, 2, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(6.5);
+        doc.text(val, x + width / 2, cy + height / 2 + 1, { align: 'center' });
+      }
+    },
+    margin: { left: 14, right: 14 },
+    tableLineColor: [234, 238, 248],
+    tableLineWidth: 0.1,
+  });
+  y = doc.lastAutoTable.finalY + 10;
+
+  // ── Observations ─────────────────────────────────────────────────
+  const debtClients = clients.filter(c =>
+    sales.filter(s => s.clientId === c.id).some(s => getSaleRemaining(s) > 0.01));
+  const lowStock = products.filter(p => p.stock <= getLowStockThreshold());
+  const obsList = [];
+  debtClients.forEach(c => {
+    const d = sales.filter(s => s.clientId === c.id).reduce((a, s) => a + getSaleRemaining(s), 0);
+    obsList.push(`${c.name} — deuda pendiente: ${cur}${d.toFixed(2)}`);
+  });
+  lowStock.forEach(p => {
+    obsList.push(`Stock bajo: ${p.name} — quedan ${p.stock} unidad${p.stock !== 1 ? 'es' : ''}`);
+  });
+  if (!obsList.length) obsList.push('Sin observaciones. Todo está en orden.');
+
+  if (y > 260) { doc.addPage(); y = 16; }
+  sectionHead('Observaciones');
+  doc.setFillColor(245, 247, 255);
+  doc.setDrawColor(...DARK);
+  const obsH = obsList.length * 6 + 8;
+  doc.roundedRect(14, y, W - 28, obsH, 2, 2, 'F');
+  doc.setLineWidth(0.8);
+  doc.setDrawColor(...DARK);
+  doc.line(14, y, 14, y + obsH);
+  doc.setLineWidth(0.1);
+  obsList.forEach((line, i) => {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(42, 52, 80);
+    doc.text('› ' + line, 20, y + 6 + i * 6);
+  });
+  y += obsH + 10;
+
+  // ── Footer on every page ─────────────────────────────────────────
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let p = 1; p <= pageCount; p++) {
+    doc.setPage(p);
+    const fy = doc.internal.pageSize.getHeight() - 8;
+    doc.setDrawColor(224, 229, 240);
+    doc.setLineWidth(0.3);
+    doc.line(14, fy - 2, W - 14, fy - 2);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(...MUTED);
+    doc.text(`${store} — Reporte generado el ${today}`, 14, fy + 2);
+    doc.text(`Página ${p} de ${pageCount}`, W - 14, fy + 2, { align: 'right' });
+  }
+
+  const safeName = store.replace(/[^a-zA-Z0-9]/g, '-');
+  doc.save(`Reporte-${safeName}-${dateSlug}.pdf`);
+  showToast('PDF descargado correctamente');
+}
+
+function exportDetailedReport() {
+  const products = getProducts();
+  const clients  = getClients();
+  const sales    = DB.get('sales');
+  const cfg      = getConfig();
+  const cur      = cfg.currency || '$';
+
+  const productsReport = products.map(p => ({
+    nombre: p.name,
+    categoria: p.category || '—',
+    precio: cur + p.price,
+    costo: cur + (p.cost || 0),
+    stock: p.stock,
+    descripcion: p.description || '',
+  }));
+
+  const clientsReport = clients.map(c => {
+    const clientSales = sales.filter(s => s.clientId === c.id);
+    const deudas = clientSales
+      .filter(s => getSaleRemaining(s) > 0.001)
+      .map(s => {
+        const items = getSaleItems(s);
+        return {
+          fecha: s.date,
+          productos: items.map(i => `${i.productName} x${i.qty}`).join(', '),
+          total: cur + s.total,
+          pagado: cur + getSaleAmountPaid(s),
+          pendiente: cur + getSaleRemaining(s).toFixed(2),
+          pagos: (s.payments || []).map(pay => `${pay.date}: ${cur}${pay.amount}`).join(' | ') || '—',
+        };
+      });
+    return {
+      nombre: c.name,
+      telefono: c.phone || '—',
+      email: c.email || '—',
+      deudas_pendientes: deudas,
+      total_adeudado: cur + clientSales.reduce((a, s) => a + getSaleRemaining(s), 0).toFixed(2),
+      total_compras: clientSales.length,
+    };
+  });
+
+  const salesReport = sales.map(s => {
+    const items = getSaleItems(s);
+    const client = clients.find(c => c.id === s.clientId);
+    return {
+      fecha: s.date,
+      cliente: client ? client.name : (s.clientName || 'Sin cliente'),
+      productos: items.map(i => `${i.productName} x${i.qty} @ ${cur}${i.unitPrice}`).join('; '),
+      total: cur + s.total,
+      pagado: cur + getSaleAmountPaid(s),
+      pendiente: cur + getSaleRemaining(s).toFixed(2),
+      estado: getSaleRemaining(s) < 0.01 ? 'Pagado' : 'Pendiente',
+    };
+  });
+
+  const report = {
+    generado: new Date().toLocaleString(),
+    tienda: cfg.storeName || 'LUMIÈRE',
+    moneda: cur,
+    resumen: {
+      total_productos: products.length,
+      total_clientes: clients.length,
+      total_ventas: sales.length,
+      deuda_total: cur + clients.reduce((a, c) => {
+        return a + sales.filter(s => s.clientId === c.id).reduce((b, s) => b + getSaleRemaining(s), 0);
+      }, 0).toFixed(2),
+    },
+    productos: productsReport,
+    clientes: clientsReport,
+    ventas: salesReport,
+  };
+
+  const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `lumiere-reporte-${todayStr()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Reporte exportado ✓');
+}
+
 function exportData() {
   const data = {
     products: getProducts(),

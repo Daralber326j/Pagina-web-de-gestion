@@ -104,6 +104,389 @@
   --accent2: #5a8870;
 }
 
+/* ── PALETTE: Agua (Glass / Water) ── */
+/* Translucent glass — cyan/teal, NOT similar to admin blue/black */
+[data-palette="agua"] {
+  --bg: #050e1a;
+  --bg2: #081626;
+  --bg3: #0c2038;
+  --surface: rgba(255,255,255,0.05);
+  --surface2: rgba(255,255,255,0.03);
+  --border: rgba(200,240,255,0.1);
+  --text: rgba(225,248,255,0.96);
+  --text2: rgba(160,225,245,0.82);
+  --text3: rgba(100,195,225,0.55);
+  --shadow: 0 4px 24px rgba(0,0,0,0.45);
+  --shadow-lg: 0 12px 48px rgba(0,0,0,0.6);
+  --accent: #22d3ee;
+  --accent-dark: #06b6d4;
+  --accent2: #67e8f9;
+  /* Big vibrant teal/cyan blobs — clearly different from admin */
+  background:
+    radial-gradient(ellipse 85% 75% at 0% 55%,   rgba(6,182,212,0.42)  0%, transparent 60%),
+    radial-gradient(ellipse 70% 65% at 100% 10%,  rgba(34,211,238,0.32) 0%, transparent 55%),
+    radial-gradient(ellipse 90% 80% at 50% 105%,  rgba(20,184,166,0.35) 0%, transparent 58%),
+    radial-gradient(ellipse 55% 50% at 75% 60%,   rgba(6,182,212,0.12)  0%, transparent 45%),
+    #050e1a;
+  background-attachment: fixed;
+}
+
+[data-palette="agua"] body,
+[data-palette="agua"] .app,
+[data-palette="agua"] .pages-container { background: transparent !important; }
+
+[data-palette="agua"] .login-screen { background: transparent !important; }
+[data-palette="agua"] .login-bg-art { display: none; }
+
+/* Login card — very transparent frosted glass */
+[data-palette="agua"] .login-card {
+  background: rgba(255,255,255,0.06) !important;
+  backdrop-filter: blur(50px) saturate(200%);
+  -webkit-backdrop-filter: blur(50px) saturate(200%);
+  border: 1px solid rgba(255,255,255,0.16) !important;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.2),
+              inset 0 -1px 0 rgba(0,200,255,0.08) !important;
+}
+
+/* Sidebar — thin frosted glass strip */
+[data-palette="agua"] .sidebar {
+  background: rgba(5,14,26,0.42) !important;
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  border-right: 1px solid rgba(34,211,238,0.12) !important;
+}
+
+/* Topbar — ultra-thin glass bar */
+[data-palette="agua"] .topbar {
+  background: rgba(5,14,26,0.38) !important;
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-bottom: 1px solid rgba(200,245,255,0.08) !important;
+}
+
+/* Cards — barely-there glass */
+[data-palette="agua"] .modal-overlay { background: transparent !important; }
+
+[data-palette="agua"] .table-card,
+[data-palette="agua"] .settings-card,
+[data-palette="agua"] .stat-card,
+[data-palette="agua"] .chart-card {
+  background: rgba(255,255,255,0.04) !important;
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid rgba(200,245,255,0.08) !important;
+}
+
+/* Modal — slightly more opaque so text is readable */
+[data-palette="agua"] .modal {
+  background: rgba(5,18,35,0.78) !important;
+  backdrop-filter: blur(36px) saturate(180%);
+  -webkit-backdrop-filter: blur(36px) saturate(180%);
+  border: 1px solid rgba(34,211,238,0.18) !important;
+  box-shadow: 0 25px 60px rgba(0,0,0,0.5) !important;
+}
+
+/* Nav items — cyan tones, not blue */
+[data-palette="agua"] .nav-item:hover { background: rgba(34,211,238,0.07) !important; }
+[data-palette="agua"] .nav-item.active {
+  background: rgba(34,211,238,0.12) !important;
+  border-left: 2px solid #22d3ee !important;
+  color: #22d3ee !important;
+}
+
+/* Button — cyan glass */
+[data-palette="agua"] .btn-primary {
+  background: linear-gradient(135deg, rgba(6,182,212,0.85), rgba(34,211,238,0.75)) !important;
+  border: 1px solid rgba(34,211,238,0.3) !important;
+  backdrop-filter: blur(10px) saturate(150%);
+  color: #fff !important;
+  box-shadow: 0 4px 18px rgba(6,182,212,0.28) !important;
+}
+[data-palette="agua"] .btn-primary:hover {
+  background: linear-gradient(135deg, rgba(6,182,212,1), rgba(34,211,238,0.95)) !important;
+  box-shadow: 0 6px 26px rgba(6,182,212,0.42) !important;
+}
+
+/* Inputs */
+[data-palette="agua"] input,
+[data-palette="agua"] select,
+[data-palette="agua"] textarea {
+  background: rgba(255,255,255,0.06) !important;
+  border-color: rgba(200,245,255,0.12) !important;
+  color: rgba(225,248,255,0.93) !important;
+}
+[data-palette="agua"] input::placeholder,
+[data-palette="agua"] textarea::placeholder { color: rgba(100,195,225,0.42) !important; }
+[data-palette="agua"] select option { background: #081626; color: #d0f0ff; }
+
+/* Accent elements */
+[data-palette="agua"] .logo-icon { color: #22d3ee; text-shadow: 0 0 14px rgba(34,211,238,0.55); }
+[data-palette="agua"] .sidebar-brand { color: rgba(190,240,255,0.88); }
+[data-palette="agua"] .sidebar-footer { border-top-color: rgba(200,245,255,0.07) !important; }
+[data-palette="agua"] .sidebar-header { border-bottom-color: rgba(200,245,255,0.07) !important; }
+
+/* ── PALETTE: Cristal (White Water / Clear Glass) ── */
+/* Daytime water — bright, translucent white glass, clearly different from dark Agua */
+[data-palette="cristal"] {
+  --bg: #cce4f8;
+  --bg2: #c0dcf4;
+  --bg3: #b4d4f0;
+  --surface: rgba(255,255,255,0.58);
+  --surface2: rgba(255,255,255,0.42);
+  --border: rgba(255,255,255,0.78);
+  --text: #0d1f3c;
+  --text2: #1e3a5f;
+  --text3: #4a6888;
+  --shadow: 0 4px 24px rgba(20,80,150,0.1);
+  --shadow-lg: 0 12px 48px rgba(20,80,150,0.16);
+  --accent: #0284c7;
+  --accent-dark: #0369a1;
+  --accent2: #38bdf8;
+  /* Bright sky/water gradients */
+  background:
+    radial-gradient(ellipse 85% 75% at 0% 55%,   rgba(147,210,250,0.7) 0%, transparent 60%),
+    radial-gradient(ellipse 75% 65% at 100% 8%,   rgba(186,230,255,0.6) 0%, transparent 55%),
+    radial-gradient(ellipse 85% 75% at 50% 105%,  rgba(125,200,245,0.65) 0%, transparent 58%),
+    radial-gradient(ellipse 60% 55% at 65% 55%,   rgba(200,235,255,0.38) 0%, transparent 45%),
+    #cce4f8;
+  background-attachment: fixed;
+}
+
+[data-palette="cristal"] body,
+[data-palette="cristal"] .app,
+[data-palette="cristal"] .pages-container { background: transparent !important; }
+
+[data-palette="cristal"] .login-screen { background: transparent !important; }
+[data-palette="cristal"] .login-bg-art { display: none; }
+
+/* Login card — white frosted glass drop */
+[data-palette="cristal"] .login-card {
+  background: rgba(255,255,255,0.72) !important;
+  backdrop-filter: blur(50px) saturate(200%);
+  -webkit-backdrop-filter: blur(50px) saturate(200%);
+  border: 1px solid rgba(255,255,255,0.9) !important;
+  box-shadow: 0 20px 60px rgba(20,80,150,0.12), inset 0 1px 0 rgba(255,255,255,0.95),
+              0 0 0 1px rgba(200,230,255,0.4) !important;
+}
+
+/* Sidebar — white glass panel */
+[data-palette="cristal"] .sidebar {
+  background: rgba(255,255,255,0.52) !important;
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  border-right: 1px solid rgba(255,255,255,0.8) !important;
+  box-shadow: 2px 0 20px rgba(20,80,150,0.06) !important;
+}
+
+/* Topbar — thin bright glass */
+[data-palette="cristal"] .topbar {
+  background: rgba(255,255,255,0.48) !important;
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-bottom: 1px solid rgba(255,255,255,0.75) !important;
+  box-shadow: 0 2px 16px rgba(20,80,150,0.05) !important;
+}
+
+/* Cards — water drop glass */
+[data-palette="cristal"] .modal-overlay { background: rgba(100,150,200,0.12) !important; }
+
+[data-palette="cristal"] .table-card,
+[data-palette="cristal"] .settings-card,
+[data-palette="cristal"] .stat-card,
+[data-palette="cristal"] .chart-card {
+  background: rgba(255,255,255,0.52) !important;
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid rgba(255,255,255,0.78) !important;
+  box-shadow: 0 4px 20px rgba(20,80,150,0.07) !important;
+}
+
+/* Modal */
+[data-palette="cristal"] .modal {
+  background: rgba(235,248,255,0.9) !important;
+  backdrop-filter: blur(32px) saturate(180%);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  border: 1px solid rgba(255,255,255,0.85) !important;
+  box-shadow: 0 20px 50px rgba(20,80,150,0.14) !important;
+}
+
+/* Nav */
+[data-palette="cristal"] .nav-item:hover { background: rgba(255,255,255,0.45) !important; }
+[data-palette="cristal"] .nav-item.active {
+  background: rgba(255,255,255,0.6) !important;
+  border-left: 2px solid #0284c7 !important;
+  color: #0284c7 !important;
+}
+
+/* Button */
+[data-palette="cristal"] .btn-primary {
+  background: linear-gradient(135deg, #0284c7, #38bdf8) !important;
+  border: 1px solid rgba(2,132,199,0.3) !important;
+  color: #fff !important;
+  box-shadow: 0 4px 16px rgba(2,132,199,0.25) !important;
+}
+[data-palette="cristal"] .btn-primary:hover {
+  background: linear-gradient(135deg, #0369a1, #0284c7) !important;
+  box-shadow: 0 6px 24px rgba(2,132,199,0.38) !important;
+}
+
+/* Inputs */
+[data-palette="cristal"] input,
+[data-palette="cristal"] select,
+[data-palette="cristal"] textarea {
+  background: rgba(255,255,255,0.65) !important;
+  border-color: rgba(255,255,255,0.8) !important;
+  color: #0d1f3c !important;
+}
+[data-palette="cristal"] input::placeholder,
+[data-palette="cristal"] textarea::placeholder { color: rgba(74,104,136,0.55) !important; }
+[data-palette="cristal"] select option { background: #eaf4ff; color: #0d1f3c; }
+
+/* Accent */
+[data-palette="cristal"] .logo-icon { color: #0284c7; }
+[data-palette="cristal"] .sidebar-brand { color: #0d1f3c; }
+[data-palette="cristal"] .sidebar-footer { border-top-color: rgba(255,255,255,0.6) !important; }
+[data-palette="cristal"] .sidebar-header { border-bottom-color: rgba(255,255,255,0.6) !important; }
+[data-palette="cristal"] .logout-btn { color: #4a6888; }
+[data-palette="cristal"] .logout-btn:hover { color: #0d1f3c; }
+[data-palette="cristal"] .topbar-user { color: #4a6888; }
+[data-palette="cristal"] .topbar-logout { color: #4a6888; }
+[data-palette="cristal"] .topbar-title { color: #0d1f3c; }
+[data-palette="cristal"] .hamburger { color: #0d1f3c; }
+
+/* ── PALETTE: Perla (Apple / VisionOS — White Pearl Glass) ── */
+/* Almost colorless, pure white-translucent surfaces, premium minimal */
+[data-palette="perla"] {
+  --bg: #eef1f6;
+  --bg2: #e8ecf2;
+  --bg3: #e2e7ef;
+  --surface: rgba(255,255,255,0.72);
+  --surface2: rgba(255,255,255,0.52);
+  --border: rgba(255,255,255,0.88);
+  --text: #111827;
+  --text2: #374151;
+  --text3: #9ca3af;
+  --shadow: 0 4px 24px rgba(0,0,0,0.05);
+  --shadow-lg: 0 12px 48px rgba(0,0,0,0.09);
+  --accent: #6b7280;
+  --accent-dark: #4b5563;
+  --accent2: #9ca3af;
+  /* Very subtle white-cool gradients — almost imperceptible, pure and clean */
+  background:
+    radial-gradient(ellipse 90% 75% at 10% 15%, rgba(224,229,238,0.85) 0%, transparent 55%),
+    radial-gradient(ellipse 65% 65% at 90% 85%, rgba(228,233,243,0.7)  0%, transparent 55%),
+    radial-gradient(ellipse 50% 55% at 50% 50%, rgba(255,255,255,0.55) 0%, transparent 65%),
+    radial-gradient(ellipse 80% 40% at 20% 90%, rgba(220,226,238,0.5)  0%, transparent 50%),
+    #eef1f6;
+  background-attachment: fixed;
+}
+
+[data-palette="perla"] body,
+[data-palette="perla"] .app,
+[data-palette="perla"] .pages-container { background: transparent !important; }
+
+[data-palette="perla"] .login-screen { background: transparent !important; }
+[data-palette="perla"] .login-bg-art { display: none; }
+
+/* Login card — premium frosted white glass */
+[data-palette="perla"] .login-card {
+  background: rgba(255,255,255,0.82) !important;
+  backdrop-filter: blur(60px) saturate(160%);
+  -webkit-backdrop-filter: blur(60px) saturate(160%);
+  border: 1px solid rgba(255,255,255,0.95) !important;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,1),
+              0 0 0 1px rgba(200,210,230,0.2) !important;
+}
+
+/* Sidebar — white matte glass strip */
+[data-palette="perla"] .sidebar {
+  background: rgba(255,255,255,0.65) !important;
+  backdrop-filter: blur(40px) saturate(150%);
+  -webkit-backdrop-filter: blur(40px) saturate(150%);
+  border-right: 1px solid rgba(255,255,255,0.9) !important;
+  box-shadow: 2px 0 20px rgba(0,0,0,0.04) !important;
+}
+
+/* Topbar */
+[data-palette="perla"] .topbar {
+  background: rgba(255,255,255,0.6) !important;
+  backdrop-filter: blur(30px) saturate(140%);
+  -webkit-backdrop-filter: blur(30px) saturate(140%);
+  border-bottom: 1px solid rgba(255,255,255,0.85) !important;
+  box-shadow: 0 1px 12px rgba(0,0,0,0.04) !important;
+}
+
+/* Modal overlay — barely visible */
+[data-palette="perla"] .modal-overlay { background: rgba(180,190,210,0.1) !important; }
+
+/* Cards */
+[data-palette="perla"] .table-card,
+[data-palette="perla"] .settings-card,
+[data-palette="perla"] .stat-card,
+[data-palette="perla"] .chart-card {
+  background: rgba(255,255,255,0.65) !important;
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  border: 1px solid rgba(255,255,255,0.88) !important;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.9) !important;
+}
+
+/* Modal */
+[data-palette="perla"] .modal {
+  background: rgba(250,252,255,0.92) !important;
+  backdrop-filter: blur(48px) saturate(150%);
+  -webkit-backdrop-filter: blur(48px) saturate(150%);
+  border: 1px solid rgba(255,255,255,0.95) !important;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.07), inset 0 1px 0 rgba(255,255,255,1) !important;
+}
+
+/* Nav items */
+[data-palette="perla"] .nav-item:hover { background: rgba(255,255,255,0.55) !important; }
+[data-palette="perla"] .nav-item.active {
+  background: rgba(255,255,255,0.72) !important;
+  border-left: 2px solid #6b7280 !important;
+  color: #111827 !important;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.6) !important;
+}
+
+/* Button — subtle charcoal, no color */
+[data-palette="perla"] .btn-primary {
+  background: linear-gradient(135deg, #1f2937, #374151) !important;
+  border: 1px solid rgba(0,0,0,0.1) !important;
+  color: #fff !important;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.12) !important;
+}
+[data-palette="perla"] .btn-primary:hover {
+  background: linear-gradient(135deg, #111827, #1f2937) !important;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.18) !important;
+}
+
+/* Inputs */
+[data-palette="perla"] input,
+[data-palette="perla"] select,
+[data-palette="perla"] textarea {
+  background: rgba(255,255,255,0.75) !important;
+  border-color: rgba(220,225,235,0.8) !important;
+  color: #111827 !important;
+}
+[data-palette="perla"] input::placeholder,
+[data-palette="perla"] textarea::placeholder { color: rgba(156,163,175,0.7) !important; }
+[data-palette="perla"] select option { background: #f5f7fa; color: #111827; }
+
+/* Text and accent elements */
+[data-palette="perla"] .logo-icon { color: #374151; text-shadow: none; }
+[data-palette="perla"] .sidebar-brand { color: #111827; }
+[data-palette="perla"] .sidebar-footer { border-top-color: rgba(200,210,230,0.35) !important; }
+[data-palette="perla"] .sidebar-header { border-bottom-color: rgba(200,210,230,0.35) !important; }
+[data-palette="perla"] .logout-btn { color: #6b7280; }
+[data-palette="perla"] .logout-btn:hover { color: #111827; }
+[data-palette="perla"] .topbar-user { color: #6b7280; }
+[data-palette="perla"] .topbar-logout { color: #6b7280; }
+[data-palette="perla"] .topbar-title { color: #111827; }
+[data-palette="perla"] .hamburger { color: #374151; }
+[data-palette="perla"] .nav-item { color: #374151; }
+[data-palette="perla"] .nav-item.active { color: #111827 !important; }
+
 /* ── FONT FAMILIES ── */
 [data-font="clasico"] {
   --font-body: 'Cormorant Garamond', serif;
@@ -130,13 +513,14 @@
 /* ─── RESET & BASE ─── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; overflow-x: hidden; }
 
 body {
   font-family: var(--font-body);
   font-size: var(--fs-base);
   background: var(--bg);
   color: var(--text);
+  overflow-x: hidden;
   min-height: 100vh;
   transition: background 0.3s, color 0.3s;
   overflow-x: hidden;
@@ -419,6 +803,10 @@ input, select, textarea, button {
   font-size: 0.8rem;
   color: var(--text3);
   letter-spacing: 0.04em;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topbar-logout {
@@ -432,6 +820,153 @@ input, select, textarea, button {
   transition: color 0.2s;
 }
 .topbar-logout:hover { color: var(--text); }
+
+/* ── ADMIN ── */
+.btn-admin-link {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text3);
+  font-size: 0.75rem;
+  padding: 0.4rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-top: 0.75rem;
+  transition: all 0.2s;
+  width: 100%;
+  letter-spacing: 0.05em;
+}
+.btn-admin-link:hover { color: var(--text); border-color: var(--text3); }
+
+.admin-section { margin-bottom: 2rem; }
+.admin-section-title {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.admin-section-sub { font-size: 0.72rem; color: var(--text3); font-weight: 400; margin-left: 0.5rem; font-family: inherit; }
+.admin-user-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.admin-user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+.admin-user-info { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.admin-user-name { font-size: 0.88rem; font-weight: 600; color: var(--text); }
+.admin-user-store { font-size: 0.75rem; color: var(--text3); }
+.admin-user-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
+.btn-sm { padding: 0.28rem 0.65rem !important; font-size: 0.76rem !important; }
+.admin-modal-user { font-size: 0.85rem; color: var(--text2); font-weight: 600; margin-bottom: 1rem; }
+
+/* ─── ADMIN MODE VISUAL THEME ─── */
+body[data-admin-mode] .nav-regular-item { display: none !important; }
+
+body[data-admin-mode] .sidebar {
+  background: #020210;
+  border-right: 1px solid rgba(0,180,255,0.3);
+  box-shadow: 4px 0 40px rgba(0,120,255,0.15), inset -1px 0 0 rgba(0,180,255,0.15);
+}
+body[data-admin-mode] .sidebar-header {
+  border-bottom: 1px solid rgba(0,180,255,0.2);
+}
+body[data-admin-mode] .logo-icon {
+  color: #00ccff;
+  text-shadow: 0 0 12px rgba(0,200,255,0.9), 0 0 30px rgba(0,150,255,0.4);
+}
+body[data-admin-mode] .sidebar-brand {
+  color: #88ddff;
+  text-shadow: 0 0 10px rgba(0,180,255,0.5);
+  letter-spacing: 0.1em;
+}
+body[data-admin-mode] .nav-item {
+  color: rgba(160,210,255,0.7);
+}
+body[data-admin-mode] .nav-item:hover {
+  background: rgba(0,150,255,0.08);
+  color: #00ccff;
+}
+body[data-admin-mode] .nav-item.active {
+  background: rgba(0,150,255,0.15);
+  color: #00ccff;
+  border-left: 2px solid #00aaff;
+  box-shadow: inset 0 0 20px rgba(0,150,255,0.06);
+}
+body[data-admin-mode] .sidebar-footer {
+  border-top: 1px solid rgba(0,180,255,0.2);
+}
+body[data-admin-mode] .logout-btn {
+  color: rgba(160,210,255,0.6);
+}
+body[data-admin-mode] .logout-btn:hover { color: #00ccff; }
+
+body[data-admin-mode] .topbar {
+  background: #020210;
+  border-bottom: 1px solid rgba(0,180,255,0.25);
+  box-shadow: 0 2px 30px rgba(0,100,255,0.12);
+}
+body[data-admin-mode] .topbar-title { color: #00aaff; letter-spacing: 0.05em; }
+body[data-admin-mode] .topbar-user { color: rgba(140,200,255,0.7); }
+body[data-admin-mode] .topbar-logout { color: rgba(140,200,255,0.5); }
+body[data-admin-mode] .topbar-logout:hover { color: #00ccff; }
+body[data-admin-mode] .hamburger { color: #00aaff; }
+
+body[data-admin-mode] .pages-container { background: #020210; }
+
+body[data-admin-mode] #page-admin {
+  position: relative;
+}
+body[data-admin-mode] #page-admin::before {
+  content: '';
+  position: absolute;
+  top: 0; left: -2rem; right: -2rem; height: 1px;
+  background: linear-gradient(90deg, transparent, #00aaff 30%, #ffffff 50%, #00aaff 70%, transparent);
+  opacity: 0.5;
+  pointer-events: none;
+}
+body[data-admin-mode] #page-admin::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: -2rem; right: -2rem; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0,150,255,0.4) 40%, rgba(0,150,255,0.4) 60%, transparent);
+  opacity: 0.4;
+  pointer-events: none;
+}
+body[data-admin-mode] .page-title {
+  color: #00ccff;
+  text-shadow: 0 0 20px rgba(0,200,255,0.35);
+  letter-spacing: 0.08em;
+}
+body[data-admin-mode] .admin-section-title {
+  color: #88ddff;
+  border-bottom-color: rgba(0,180,255,0.2);
+  text-shadow: 0 0 8px rgba(0,180,255,0.2);
+}
+body[data-admin-mode] .admin-user-row {
+  background: rgba(0,30,60,0.6);
+  border-color: rgba(0,150,255,0.2);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+body[data-admin-mode] .admin-user-row:hover {
+  border-color: rgba(0,180,255,0.5);
+  box-shadow: 0 0 15px rgba(0,150,255,0.1);
+}
+body[data-admin-mode] .admin-user-name { color: #c8e8ff; }
+body[data-admin-mode] .admin-section-sub { color: rgba(140,200,255,0.6); }
+body[data-admin-mode] .empty-state { color: rgba(140,200,255,0.4); }
+
+/* Palette picker in admin mode */
+body[data-admin-mode] .palette-card { border-color: rgba(0,150,255,0.2); }
+body[data-admin-mode] .palette-card:hover { border-color: rgba(0,200,255,0.6); }
+body[data-admin-mode] .palette-card.active { border-color: #00aaff; box-shadow: 0 0 12px rgba(0,170,255,0.4); }
+body[data-admin-mode] .palette-label { color: rgba(160,220,255,0.8); }
 
 .cloud-sync-status {
   font-size: 0.85rem;
@@ -1319,6 +1854,25 @@ input, select, textarea, button {
 .cd-section-debt { color: #e07070; }
 
 .cd-fiado-list { display: flex; flex-direction: column; gap: 0.85rem; }
+
+.cd-debt-total-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(224,112,112,0.1);
+  border: 1px solid rgba(224,112,112,0.25);
+  border-left: 3px solid #e07070;
+  border-radius: var(--radius);
+  padding: 0.6rem 1rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.82rem;
+  color: var(--text2);
+}
+.cd-debt-total-banner strong {
+  font-size: 1rem;
+  color: #e07070;
+  letter-spacing: -0.02em;
+}
 
 .cd-fiado-card {
   background: var(--bg2);
