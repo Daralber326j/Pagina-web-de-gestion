@@ -101,11 +101,24 @@ window.addEventListener('DOMContentLoaded', () => {
 // ─── SETTINGS ──────────────────────────────
 function applySettings() {
   const cfg = DB.getObj('config', {});
-  const palette = cfg.palette || 'black';
+  // lum_pal sobrevive a CloudSync.pull() — tiene prioridad sobre el config sincronizado.
+  // Si no existe aún (primera carga tras la actualización), lo inicializa desde config.
+  if (!localStorage.getItem('lum_pal') && cfg.palette) {
+    localStorage.setItem('lum_pal', cfg.palette);
+  }
+  const palette = localStorage.getItem('lum_pal') || cfg.palette || 'black';
   document.documentElement.setAttribute('data-palette', palette);
   document.documentElement.setAttribute('data-font', cfg.fontFamily || 'moderno');
   document.documentElement.setAttribute('data-fontsize', cfg.fontSize || 'medium');
   if (cfg.accent) applyAccentVars(cfg.accent, cfg.accentDark);
+  document.documentElement.setAttribute('data-fontweight', cfg.fontWeight || 'normal');
+  applyCustomAppearance();
+  applyVideoBg(palette);
+  applyAdminTheme();
+  applyAdminLayout();
+  applyAdminBg();
+  applyLayout();
+  renderRightSidebar();
 }
 
 function getConfig() { return DB.getObj('config', { palette: 'black', fontFamily: 'moderno', fontSize: 'medium', storeName: 'LUMIÈRE', currency: '$', lowStock: 5 }); }
@@ -113,10 +126,13 @@ function getConfig() { return DB.getObj('config', { palette: 'black', fontFamily
 function saveSettings() {
   const cfg = getConfig();
   cfg.storeName = document.getElementById('settingStoreName').value || cfg.storeName;
-  cfg.currency = document.getElementById('settingCurrency').value;
-  cfg.lowStock = parseInt(document.getElementById('settingLowStock').value) || 5;
+  cfg.currency  = document.getElementById('settingCurrency').value;
+  cfg.lowStock  = parseInt(document.getElementById('settingLowStock').value) || 5;
   DB.set('config', cfg);
+  // Guardar moneda por separado para que CloudSync.pull() no la borre
+  localStorage.setItem('lum_cur', cfg.currency);
   document.getElementById('sidebarBrand').textContent = cfg.storeName;
+  if (typeof CloudSync !== 'undefined' && CloudSync.enabled) CloudSync.schedulePush();
   showToast('Configuración guardada ✓');
 }
 
@@ -124,13 +140,144 @@ function setPalette(name) {
   document.documentElement.setAttribute('data-palette', name);
   const cfg = getConfig();
   cfg.palette = name;
-  // clear custom accent when switching palette
   delete cfg.accent;
   delete cfg.accentDark;
   DB.set('config', cfg);
+  // Guardar por separado igual que la moneda — sobrevive a CloudSync.pull()
+  localStorage.setItem('lum_pal', name);
   document.querySelectorAll('.palette-card').forEach(c => {
     c.classList.toggle('active', c.dataset.pal === name);
   });
+  // Sincronizar cambio a Firestore para que future pulls traigan el valor correcto
+  if (typeof CloudSync !== 'undefined' && CloudSync.enabled) CloudSync.schedulePush();
+  applyVideoBg(name);
+}
+
+// ─── VIDEO DE FONDO (paleta "Lluvia") — almacenado localmente en IndexedDB ───
+// El usuario sube el video desde su dispositivo. Se guarda en el navegador
+// usando IndexedDB (sin Firebase, sin consumo de base de datos).
+
+let _bgBlobURL = null; // URL temporal del blob actual
+
+function _openVidDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open('lum_vidstore', 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore('vids');
+    req.onsuccess = e => res(e.target.result);
+    req.onerror = e => rej(e.target.error);
+  });
+}
+async function _saveVidBlob(blob) {
+  const db = await _openVidDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('vids', 'readwrite');
+    tx.objectStore('vids').put(blob, 'bg');
+    tx.oncomplete = res; tx.onerror = rej;
+  });
+}
+async function _getVidBlob() {
+  try {
+    const db = await _openVidDB();
+    return new Promise(res => {
+      const req = db.transaction('vids', 'readonly').objectStore('vids').get('bg');
+      req.onsuccess = e => res(e.target.result || null);
+      req.onerror = () => res(null);
+    });
+  } catch { return null; }
+}
+async function _delVidBlob() {
+  const db = await _openVidDB();
+  return new Promise(res => {
+    const tx = db.transaction('vids', 'readwrite');
+    tx.objectStore('vids').delete('bg');
+    tx.oncomplete = res; tx.onerror = res;
+  });
+}
+
+async function applyVideoBg(palette) {
+  const wrap  = document.getElementById('bgVideoWrap');
+  const video = document.getElementById('bgVideo');
+  const src   = document.getElementById('bgVideoSrc');
+  if (!wrap || !video || !src) return;
+
+  const inAdminMode = document.body.hasAttribute('data-admin-mode');
+  let shouldShow;
+
+  if (inAdminMode) {
+    // Admin: el video solo aparece cuando el tema es explícitamente 'lluvia'.
+    // Cambia de tema → video desaparece, sin importar qué paleta haya en el config.
+    shouldShow = localStorage.getItem('lum_adminTheme') === 'lluvia';
+  } else {
+    // Usuario normal: video solo si su paleta activa es lavanda
+    const pal = palette || localStorage.getItem('lum_pal') || getConfig().palette || 'black';
+    shouldShow = pal === 'lavanda';
+  }
+
+  if (!shouldShow) {
+    wrap.classList.add('hidden');
+    video.pause();
+    return;
+  }
+
+  const blob = await _getVidBlob();
+  if (!blob) { wrap.classList.add('hidden'); return; }
+
+  if (_bgBlobURL) URL.revokeObjectURL(_bgBlobURL);
+  _bgBlobURL = URL.createObjectURL(blob);
+  wrap.classList.remove('hidden');
+  src.setAttribute('src', _bgBlobURL);
+  video.load();
+  video.play().catch(() => {});
+}
+
+async function handleVideoUpload(file) {
+  if (!file || !file.type.startsWith('video/')) {
+    showToast('Selecciona un archivo de video válido', true); return;
+  }
+  showToast('Guardando video en el navegador…');
+  await _saveVidBlob(file);
+  await applyVideoBg();
+  await renderVideoPicker();
+  showToast('Video de fondo listo ✓');
+}
+
+async function removeVideoBg() {
+  if (_bgBlobURL) { URL.revokeObjectURL(_bgBlobURL); _bgBlobURL = null; }
+  await _delVidBlob();
+  const wrap  = document.getElementById('bgVideoWrap');
+  const video = document.getElementById('bgVideo');
+  if (wrap) wrap.classList.add('hidden');
+  if (video) video.pause();
+  await renderVideoPicker();
+  showToast('Video de fondo eliminado');
+}
+
+async function renderVideoPicker(containerId = 'videoPicker') {
+  const picker = document.getElementById(containerId);
+  if (!picker) return;
+  const blob = await _getVidBlob();
+
+  if (blob) {
+    const previewURL = _bgBlobURL || URL.createObjectURL(blob);
+    picker.innerHTML = `
+      <div style="display:flex;align-items:center;gap:0.85rem;flex-wrap:wrap">
+        <video src="${previewURL}" muted preload="metadata" playsinline
+               style="height:72px;width:124px;border-radius:8px;object-fit:cover;border:2px solid var(--accent)"></video>
+        <div>
+          <p style="font-size:0.82rem;color:var(--text);margin-bottom:0.45rem;font-weight:500">Video cargado ✓</p>
+          <button class="btn-secondary btn-sm" onclick="document.getElementById('videoBgInput').click()">Cambiar</button>
+          <button class="btn-danger btn-sm" style="margin-left:0.4rem" onclick="removeVideoBg()">Quitar</button>
+        </div>
+      </div>`;
+  } else {
+    picker.innerHTML = `
+      <button class="btn-secondary" onclick="document.getElementById('videoBgInput').click()">
+        📁 Subir video desde mi dispositivo
+      </button>
+      <p style="font-size:0.76rem;color:var(--text3);margin-top:0.5rem">
+        MP4, WebM, MOV — se guarda en este navegador, sin consumir Firebase.
+      </p>`;
+  }
 }
 
 function setFontFamily(font) {
@@ -164,7 +311,10 @@ function applyAccentVars(color, dark) {
   document.documentElement.style.setProperty('--accent-dark', dark || color);
 }
 
-function getCurrency() { return getConfig().currency || '$'; }
+function getCurrency() {
+  // lum_cur se guarda aparte para sobrevivir CloudSync.pull()
+  return localStorage.getItem('lum_cur') || getConfig().currency || '$';
+}
 function getLowStockThreshold() { return getConfig().lowStock || 5; }
 
 // Format a monetary amount — always rounds to whole number, no cents
@@ -259,7 +409,7 @@ function showLoginScreen() {
   document.getElementById('appMain').classList.add('hidden');
 }
 
-function loginSuccess(user) {
+async function loginSuccess(user) {
   currentUser = user;
   cleanupTrash();
   if (user.isAdmin) {
@@ -268,7 +418,6 @@ function loginSuccess(user) {
     document.body.removeAttribute('data-admin-mode');
   }
   if (typeof CloudSync !== 'undefined') {
-    // Admin syncs to admin's own document; staff sync to their own document
     CloudSync.setUser(user.isAdmin ? ADMIN_CREDS.username : user.username);
     CloudSync.showInitialStatus();
     if (!user.isAdmin) CloudSync.push();
@@ -280,7 +429,29 @@ function loginSuccess(user) {
   document.getElementById('sidebarBrand').textContent = user.isAdmin ? '⚙ Admin' : (user.storeName || cfg.storeName || 'LUMIÈRE');
   document.querySelectorAll('.nav-admin-item').forEach(el => el.classList.toggle('hidden', !user.isAdmin));
   navigateTo(user.isAdmin ? 'admin' : 'dashboard');
-  if (!user.isAdmin) { loadSettingsPage(); refreshNavLabels(); }
+  if (!user.isAdmin) {
+    const _cfg = DB.getObj('config', {});
+    // Solo escribir lum_pal si NO hay ya un valor del usuario en esta sesión.
+    // Si ya está puesto (el usuario cambió paleta y recargó antes de que el push
+    // terminara), respetamos esa selección en vez de pisar con el valor de Firestore.
+    if (!localStorage.getItem('lum_pal')) {
+      localStorage.setItem('lum_pal', _cfg.palette || 'black');
+    }
+    if (!localStorage.getItem('lum_layout')) {
+      localStorage.setItem('lum_layout', _cfg.layout || 'default');
+    }
+    loadSettingsPage();
+    refreshNavLabels();
+    _pushRegistry({ [`lastSeen.${user.username}`]: Date.now() }).catch(() => {});
+    _checkAndShowAnnouncement();
+  } else {
+    // Admin: solo inicializar lum_pal si no hay valor previo en esta sesión
+    if (!localStorage.getItem('lum_pal')) {
+      const adminTheme = localStorage.getItem('lum_adminTheme') || 'default';
+      const adminPal   = (DB.getObj('config', {})).palette || 'black';
+      localStorage.setItem('lum_pal', adminTheme === 'lluvia' ? 'lavanda' : adminPal);
+    }
+  }
   applySettings();
 }
 
@@ -357,8 +528,12 @@ async function handleRegister() {
 function logout() {
   if (typeof CloudSync !== 'undefined') CloudSync.clearUser();
   localStorage.removeItem('lum_session');
+  // Limpiar claves de sesión para que el próximo usuario empiece limpio
+  localStorage.removeItem('lum_pal');
+  localStorage.removeItem('lum_layout');
   currentUser = null;
   isAdminSession = false;
+  _adminAccounts = null;
   destroyCharts();
   showLoginScreen();
   toggleAuthMode('login');
@@ -392,29 +567,55 @@ function cleanupTrash() {
   if (clean.length !== trash.length) DB.set('trash', clean);
 }
 
-function renderAdminPage() {
+async function renderAdminPage() {
   cleanupTrash();
-  // Use registry cache if available, otherwise local users as fallback
-  const users = _adminAccounts !== null ? _adminAccounts : DB.get('users');
-  const trash = DB.get('trash');
-  const week = 7 * 24 * 60 * 60 * 1000;
 
-  // Auto-load from registry if not loaded yet
-  if (_adminAccounts === null) adminSyncUsers();
+  // Si aún no tenemos la lista del registro, la traemos primero
+  if (_adminAccounts === null) {
+    document.getElementById('adminContent').innerHTML =
+      '<p style="padding:1rem;color:var(--text3)">Cargando cuentas… ↻</p>';
+    await adminSyncUsers(); // ya llama a renderAdminPage() al terminar
+    return;
+  }
+
+  const users  = _adminAccounts;
+  const trash  = DB.get('trash');
+  const week   = 7 * 24 * 60 * 60 * 1000;
+  // lastSeen viene del registro global
+  const reg    = await _pullRegistry();
+  const lastSeenMap = reg?.lastSeen || {};
+
+  function fmtLastSeen(username) {
+    const ts = lastSeenMap[username];
+    if (!ts) return { label: 'Nunca conectado', dot: 'dot-offline' };
+    const diff = Date.now() - ts;
+    if (diff < 900000)   return { label: 'En línea ahora',          dot: 'dot-online' };
+    if (diff < 3600000)  return { label: `Hace ${Math.floor(diff/60000)} min`, dot: 'dot-recent' };
+    if (diff < 86400000) return { label: `Hace ${Math.floor(diff/3600000)} h`, dot: 'dot-recent' };
+    if (diff < 604800000)return { label: `Hace ${Math.floor(diff/86400000)} días`, dot: 'dot-idle' };
+    return { label: `Hace más de una semana`, dot: 'dot-offline' };
+  }
 
   const usersHtml = users.length === 0
-    ? '<p class="empty-state">No hay cuentas registradas. Si hay cuentas en la nube, pulsa ↻ Actualizar.</p>'
-    : users.map(u => `
+    ? '<p class="empty-state">No hay cuentas. Pulsa ↻ Actualizar o crea una.</p>'
+    : users.map(u => {
+        const seen = fmtLastSeen(u.username);
+        return `
       <div class="admin-user-row">
         <div class="admin-user-info">
-          <span class="admin-user-name">${u.username}</span>
+          <div style="display:flex;align-items:center;gap:0.5rem">
+            <span class="status-dot ${seen.dot}"></span>
+            <span class="admin-user-name">${u.username}</span>
+          </div>
           <span class="admin-user-store">${u.storeName || '—'}</span>
+          <span class="admin-last-seen">🕐 ${seen.label}</span>
         </div>
         <div class="admin-user-actions">
           <button class="btn-secondary btn-sm" onclick="openChangePassword('${u.id}','${u.username}')">Contraseña</button>
-          <button class="btn-danger btn-sm" onclick="adminDeleteUser('${u.id}')">Eliminar</button>
+          <button class="btn-danger btn-sm" onclick="adminDeleteUser('${u.id}','${u.username}')">Eliminar</button>
         </div>
-      </div>`).join('');
+      </div>`;
+      }).join('');
 
   const trashHtml = trash.length === 0
     ? '<p class="empty-state">La papelera está vacía.</p>'
@@ -441,6 +642,7 @@ function renderAdminPage() {
     { id: 'agua',     label: 'Agua',       colors: ['#030810','#0c2040','#38bdf8','#ffffff'] },
     { id: 'cristal',  label: 'Cristal',    colors: ['#cce4f8','#eaf4ff','#0284c7','#0d1f3c'] },
     { id: 'perla',    label: 'Perla',      colors: ['#c8d2e0','rgba(255,255,255,0.35)','#475569','#0f172a'] },
+    { id: 'lavanda',  label: 'Lluvia',     colors: ['#2b2f38','rgba(255,255,255,0.32)','rgba(210,235,255,0.6)','#f0f0f0'] },
   ];
   const themePickerHtml = loginThemes.map(t => `
     <button class="palette-card ${t.id === currentLoginTheme ? 'active' : ''}" onclick="setLoginTheme('${t.id}')">
@@ -448,7 +650,32 @@ function renderAdminPage() {
       <div class="palette-label">${t.label}</div>
     </button>`).join('');
 
+  const currentAnn = reg?.announcement || null;
+  const annHtml = currentAnn
+    ? `<div class="admin-current-ann">
+        ${currentAnn.imageB64 ? `<img src="${currentAnn.imageB64}" style="max-width:180px;max-height:120px;border-radius:8px;margin-bottom:0.5rem;display:block">` : ''}
+        <p style="font-size:0.85rem;margin-bottom:0.35rem"><strong>Anuncio activo:</strong> ${currentAnn.text || '—'}</p>
+        <p style="font-size:0.72rem;color:var(--text3)">${currentAnn.date ? new Date(currentAnn.date).toLocaleString() : ''}</p>
+      </div>`
+    : '<p style="font-size:0.8rem;color:var(--text3)">No hay anuncio activo.</p>';
+
   document.getElementById('adminContent').innerHTML = `
+    <div class="admin-section">
+      <h3 class="admin-section-title">Anuncio para usuarios</h3>
+      <p class="admin-section-sub" style="display:block;margin-bottom:0.75rem">Se muestra a cada usuario la próxima vez que inicie sesión.</p>
+      ${annHtml}
+      <div style="margin-top:0.85rem">
+        <textarea id="annText" rows="3" placeholder="Escribe tu mensaje para todos los usuarios…"
+          style="width:100%;resize:vertical;margin-bottom:0.5rem;border-radius:var(--radius-sm);padding:0.6rem;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:var(--font-body);font-size:0.85rem">${currentAnn?.text || ''}</textarea>
+        <div id="annImgPreview" style="margin-bottom:0.5rem">${currentAnn?.imageB64 ? '' : ''}</div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
+          <button class="btn-secondary btn-sm" onclick="document.getElementById('annImgInput').click()">📷 Foto</button>
+          <input type="file" id="annImgInput" accept="image/*" class="hidden" onchange="previewAnnImage(event)" />
+          <button class="btn-primary btn-sm" onclick="publishAnnouncement()">Publicar</button>
+          ${currentAnn ? `<button class="btn-danger btn-sm" onclick="clearAnnouncement()">Quitar anuncio</button>` : ''}
+        </div>
+      </div>
+    </div>
     <div class="admin-section">
       <h3 class="admin-section-title">Crear cuenta de usuario</h3>
       <div class="admin-create-form">
@@ -470,7 +697,7 @@ function renderAdminPage() {
     </div>
     <div class="admin-section">
       <h3 class="admin-section-title">Importar cuenta existente</h3>
-      <p class="admin-section-sub" style="margin:0 0 0.75rem;display:block;font-size:0.78rem;color:var(--text3)">Si alguien se registró antes de la última actualización, su cuenta quedó en un documento separado. Escribe su usuario para moverla aquí.</p>
+      <p class="admin-section-sub" style="margin:0 0 0.75rem;display:block;font-size:0.78rem;color:var(--text3)">Si alguien se registró antes de la última actualización, su cuenta quedó en un documento separado.</p>
       <div style="display:flex;gap:0.5rem;align-items:flex-end;flex-wrap:wrap">
         <div class="input-group" style="flex:1;min-width:160px;margin-bottom:0">
           <label>Usuario a importar</label>
@@ -494,19 +721,66 @@ function renderAdminPage() {
       <h3 class="admin-section-title">Tema de pantalla de login</h3>
       <p class="admin-section-sub" style="margin:0 0 1rem;display:block">Se aplica a todos al acceder.</p>
       <div class="palette-picker">${themePickerHtml}</div>
+    </div>
+    <div class="admin-section">
+      <h3 class="admin-section-title">Tema del panel de administrador</h3>
+      ${[
+        { id:'default', label:'Azul',    c1:'#020210', c2:'#00aaff' },
+        { id:'matrix',  label:'Matrix',  c1:'#000',    c2:'#00ff41' },
+        { id:'batman',  label:'Batman',  c1:'#050505', c2:'#c9a227' },
+        { id:'lluvia',  label:'Lluvia',  c1:'#2b2f38', c2:'rgba(210,235,255,0.8)' },
+      ].map(t => `
+        <button class="admin-theme-btn ${(localStorage.getItem('lum_adminTheme')||'default')===t.id?'active':''}"
+                onclick="setAdminTheme('${t.id}')">
+          <span style="display:flex;gap:3px">
+            <span style="background:${t.c1};width:18px;height:18px;border-radius:3px"></span>
+            <span style="background:${t.c2};width:10px;height:18px;border-radius:3px"></span>
+          </span>
+          ${t.label}
+        </button>`).join('')}
+      ${(localStorage.getItem('lum_adminTheme')||'default')==='lluvia'
+        ? `<div style="margin-top:0.85rem"><h4 style="font-size:0.8rem;color:var(--text3);margin-bottom:0.4rem">Video de fondo (paleta Lluvia)</h4><div id="adminLluviaVideoPicker"></div></div>`
+        : ''}
+      <h4 style="font-size:0.82rem;margin:1rem 0 0.4rem;color:var(--text3)">Imagen de fondo</h4>
+      <div id="adminBgPickerWrap"></div>
+    </div>
+    <div class="admin-section">
+      <h3 class="admin-section-title">Distribución del panel</h3>
+      <p class="admin-section-sub" style="display:block;margin-bottom:0.75rem">Elige cómo quieres que se vean las secciones.</p>
+      ${[
+        { id:'default',  label:'Clásico',   desc:'Sidebar estándar, contenido a la derecha' },
+        { id:'compact',  label:'Compacto',  desc:'Sidebar más angosto, elementos más pequeños' },
+        { id:'wide',     label:'Amplio',    desc:'Sidebar ancho, contenido centrado' },
+      ].map(l => `
+        <button class="admin-layout-btn ${(localStorage.getItem('lum_adminLayout')||'default')===l.id?'active':''}"
+                onclick="setAdminLayout('${l.id}')">
+          <strong>${l.label}</strong>
+          <span>${l.desc}</span>
+        </button>`).join('')}
     </div>`;
+  // Poblar pickers asíncronos tras render
+  renderAdminBgPicker();
+  if ((localStorage.getItem('lum_adminTheme')||'default') === 'lluvia') {
+    renderVideoPicker('adminLluviaVideoPicker');
+  }
 }
 
-function adminDeleteUser(userId) {
-  const users = DB.get('users');
-  const user = users.find(u => u.id === userId);
-  if (!user) return;
-  confirm2('¿Mover a papelera?', `La cuenta "${user.username}" quedará 7 días antes de borrarse definitivamente.`, async () => {
-    DB.set('users', users.filter(u => u.id !== userId));
+function adminDeleteUser(userId, username) {
+  const displayName = username || userId;
+  confirm2('¿Eliminar cuenta?', `"${displayName}" se moverá a la papelera por 7 días.`, async () => {
+    // Buscar en usuarios locales y en registry
+    const localUsers = DB.get('users');
+    const localUser  = localUsers.find(u => u.id === userId);
+    const regUser    = (_adminAccounts || []).find(a => a.id === userId);
+    const userObj    = localUser || regUser || { id: userId, username: displayName };
+
+    if (localUser) {
+      DB.set('users', localUsers.filter(u => u.id !== userId));
+    }
     const trash = DB.get('trash');
-    trash.push({ user, deletedAt: Date.now() });
+    trash.push({ user: userObj, deletedAt: Date.now() });
     DB.set('trash', trash);
-    // Remove from global registry
+
     if (_adminAccounts) {
       _adminAccounts = _adminAccounts.filter(a => a.id !== userId);
       await _pushRegistry({ accounts: _adminAccounts });
@@ -514,6 +788,375 @@ function adminDeleteUser(userId) {
     renderAdminPage();
     showToast('Cuenta movida a papelera');
   });
+}
+
+// ── ANUNCIOS ADMIN ─────────────────────────────────────────────────
+let _annPendingImageB64 = null;
+
+function previewAnnImage(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    _annPendingImageB64 = e.target.result;
+    const prev = document.getElementById('annImgPreview');
+    if (prev) prev.innerHTML = `<img src="${_annPendingImageB64}" style="max-width:160px;max-height:100px;border-radius:6px;margin-bottom:0.4rem;display:block">`;
+  };
+  // Redimensionar imagen antes de guardar (máx 600px)
+  const img = new Image();
+  img.onload = () => {
+    const scale = Math.min(600 / img.width, 400 / img.height, 1);
+    const canvas = document.createElement('canvas');
+    canvas.width  = Math.round(img.width  * scale);
+    canvas.height = Math.round(img.height * scale);
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    _annPendingImageB64 = canvas.toDataURL('image/jpeg', 0.75);
+    const prev = document.getElementById('annImgPreview');
+    if (prev) prev.innerHTML = `<img src="${_annPendingImageB64}" style="max-width:160px;max-height:100px;border-radius:6px;margin-bottom:0.4rem;display:block">`;
+    URL.revokeObjectURL(img.src);
+  };
+  img.src = URL.createObjectURL(file);
+}
+
+async function publishAnnouncement() {
+  const text = document.getElementById('annText')?.value?.trim() || '';
+  if (!text && !_annPendingImageB64) {
+    showToast('Escribe un mensaje o adjunta una foto', true); return;
+  }
+  const ann = { id: uid(), text, imageB64: _annPendingImageB64 || null, date: Date.now() };
+  await _pushRegistry({ announcement: ann });
+  _annPendingImageB64 = null;
+  showToast('Anuncio publicado ✓');
+  renderAdminPage();
+}
+
+async function clearAnnouncement() {
+  await _pushRegistry({ announcement: null });
+  showToast('Anuncio eliminado');
+  renderAdminPage();
+}
+
+async function _checkAndShowAnnouncement() {
+  const reg = await _pullRegistry();
+  const ann = reg?.announcement;
+  if (!ann?.id) return;
+  const seenId = localStorage.getItem('lum_seenAnn');
+  if (seenId === ann.id) return;
+  localStorage.setItem('lum_seenAnn', ann.id);
+  // Mostrar en modal de anuncio
+  const box = document.getElementById('announcementModal');
+  if (!box) return;
+  document.getElementById('annModalText').textContent = ann.text || '';
+  const imgEl = document.getElementById('annModalImg');
+  if (imgEl) {
+    if (ann.imageB64) { imgEl.src = ann.imageB64; imgEl.classList.remove('hidden'); }
+    else imgEl.classList.add('hidden');
+  }
+  document.getElementById('annModalDate').textContent =
+    ann.date ? new Date(ann.date).toLocaleString() : '';
+  openModal('announcementModal');
+}
+
+// ── TEMA ADMIN (azul / matrix) ─────────────────────────────────────
+function setAdminTheme(theme) {
+  const prevTheme = localStorage.getItem('lum_adminTheme') || 'default';
+  localStorage.setItem('lum_adminTheme', theme);
+  document.body.setAttribute('data-admin-theme', theme);
+
+  if (theme === 'lluvia') {
+    // Guardar la paleta actual antes de forzar lavanda, para restaurarla después
+    const curPal = localStorage.getItem('lum_pal') || getConfig().palette || 'black';
+    if (curPal !== 'lavanda') localStorage.setItem('lum_adminPrePal', curPal);
+    setPalette('lavanda');
+  } else if (prevTheme === 'lluvia') {
+    // Saliendo de Lluvia: restaurar la paleta que había antes
+    const restorePal = localStorage.getItem('lum_adminPrePal') || 'black';
+    localStorage.removeItem('lum_adminPrePal');
+    setPalette(restorePal);
+  }
+
+  applyVideoBg();
+  renderAdminPage();
+}
+
+function applyAdminTheme() {
+  // Solo aplica el atributo visual — la paleta la maneja applySettings desde config
+  const theme = localStorage.getItem('lum_adminTheme') || 'default';
+  document.body.setAttribute('data-admin-theme', theme);
+}
+
+function setAdminLayout(layout) {
+  localStorage.setItem('lum_adminLayout', layout);
+  document.body.setAttribute('data-admin-layout', layout);
+  renderAdminPage();
+}
+
+function applyAdminLayout() {
+  const layout = localStorage.getItem('lum_adminLayout') || 'default';
+  document.body.setAttribute('data-admin-layout', layout);
+}
+
+// ── DISTRIBUCIÓN BICOLUMNA ──────────────────────────────────────────
+function setLayout(name) {
+  localStorage.setItem('lum_layout', name);
+  document.body.setAttribute('data-layout', name);
+  const cfg = getConfig();
+  cfg.layout = name;
+  DB.set('config', cfg);
+  renderRightSidebar();
+  document.querySelectorAll('.layout-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.layout === name);
+  });
+}
+
+function applyLayout() {
+  const layout = localStorage.getItem('lum_layout') || getConfig().layout || 'default';
+  document.body.setAttribute('data-layout', layout);
+}
+
+function renderRightSidebar() {
+  try {
+    const rs = document.getElementById('rightSidebar');
+    if (!rs) return;
+
+    const layout  = localStorage.getItem('lum_layout') || 'default';
+    const isAdmin = document.body.hasAttribute('data-admin-mode');
+
+    if (layout !== 'dual' || isAdmin) {
+      rs.innerHTML = '';
+      rs.style.display = 'none';
+      return;
+    }
+
+    rs.style.display = '';
+    const currentPage = document.querySelector('.page.active')?.id?.replace('page-', '') || 'dashboard';
+    const labels = getUserNavLabels();
+    if (!labels || !labels.length) return;
+
+    rs.innerHTML = labels.map(item => `
+      <button class="rs-btn ${item.id === currentPage ? 'active' : ''}"
+              onclick="navigateTo('${item.id}')"
+              title="${item.label}">
+        <span class="rs-icon">${item.icon}</span>
+        <span class="rs-label">${item.label.slice(0, 7)}</span>
+      </button>`).join('');
+  } catch(e) {
+    console.warn('[RightSidebar]', e.message);
+  }
+}
+
+function setFontWeight(w) {
+  document.documentElement.setAttribute('data-fontweight', w);
+  const cfg = getConfig();
+  cfg.fontWeight = w;
+  DB.set('config', cfg);
+  document.querySelectorAll('.fontweight-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.fw === w);
+  });
+}
+
+// ── IMAGEN DE FONDO ADMIN (IndexedDB) ───────────────────────────────
+async function _openAdminBgDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open('lum_adminbg', 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore('bg');
+    req.onsuccess = e => res(e.target.result);
+    req.onerror = e => rej(e.target.error);
+  });
+}
+async function _saveAdminBgBlob(blob) {
+  const db = await _openAdminBgDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('bg', 'readwrite');
+    tx.objectStore('bg').put(blob, 'img');
+    tx.oncomplete = res; tx.onerror = rej;
+  });
+}
+async function _getAdminBgBlob() {
+  try {
+    const db = await _openAdminBgDB();
+    return new Promise(res => {
+      const req = db.transaction('bg', 'readonly').objectStore('bg').get('img');
+      req.onsuccess = e => res(e.target.result || null);
+      req.onerror = () => res(null);
+    });
+  } catch { return null; }
+}
+async function _delAdminBgBlob() {
+  const db = await _openAdminBgDB();
+  return new Promise(res => {
+    const tx = db.transaction('bg', 'readwrite');
+    tx.objectStore('bg').delete('img');
+    tx.oncomplete = res; tx.onerror = res;
+  });
+}
+
+let _adminBgURL = null;
+
+async function applyAdminBg() {
+  const blob = await _getAdminBgBlob();
+  let el = document.getElementById('adminBgLayer');
+  if (!blob) { if (el) el.remove(); return; }
+  if (_adminBgURL) URL.revokeObjectURL(_adminBgURL);
+  _adminBgURL = URL.createObjectURL(blob);
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'adminBgLayer';
+    el.style.cssText = 'position:fixed;inset:0;z-index:0;pointer-events:none;transition:opacity 0.3s';
+    document.body.prepend(el);
+  }
+  el.style.backgroundImage = `url(${_adminBgURL})`;
+  el.style.backgroundSize  = 'cover';
+  el.style.backgroundPosition = 'center';
+  el.style.opacity = document.body.hasAttribute('data-admin-mode') ? '1' : '0';
+}
+
+async function uploadAdminBg(file) {
+  if (!file || !file.type.startsWith('image/')) { showToast('Selecciona una imagen válida', true); return; }
+  showToast('Guardando imagen…');
+  await _saveAdminBgBlob(file);
+  await applyAdminBg();
+  await renderAdminBgPicker();
+  showToast('Imagen de fondo del admin guardada ✓');
+}
+
+async function removeAdminBg() {
+  await _delAdminBgBlob();
+  if (_adminBgURL) { URL.revokeObjectURL(_adminBgURL); _adminBgURL = null; }
+  const el = document.getElementById('adminBgLayer');
+  if (el) el.remove();
+  await renderAdminBgPicker();
+  showToast('Imagen eliminada');
+}
+
+async function renderAdminBgPicker() {
+  const wrap = document.getElementById('adminBgPickerWrap');
+  if (!wrap) return;
+  const blob = await _getAdminBgBlob();
+  if (blob) {
+    const url = _adminBgURL || URL.createObjectURL(blob);
+    wrap.innerHTML = `
+      <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+        <img src="${url}" style="height:64px;width:110px;object-fit:cover;border-radius:8px;border:2px solid var(--accent)">
+        <div>
+          <p style="font-size:0.8rem;margin-bottom:0.3rem">Imagen cargada ✓</p>
+          <button class="btn-secondary btn-sm" onclick="document.getElementById('adminBgInput').click()">Cambiar</button>
+          <button class="btn-danger btn-sm" style="margin-left:0.4rem" onclick="removeAdminBg()">Quitar</button>
+        </div>
+      </div>`;
+  } else {
+    wrap.innerHTML = `
+      <button class="btn-secondary btn-sm" onclick="document.getElementById('adminBgInput').click()">
+        🖼 Subir imagen de fondo
+      </button>
+      <p style="font-size:0.74rem;color:var(--text3);margin-top:0.4rem">Se guarda en este navegador. Sin consumo de Firebase.</p>`;
+  }
+}
+
+// ── APARIENCIA AVANZADA ─────────────────────────────────────────────
+// Paletas con efecto vidrio (fondo visible a través de los paneles)
+const _GLASS_PALETTES = ['agua', 'cristal', 'perla', 'lavanda'];
+
+function applyCustomAppearance() {
+  const cfg = getConfig();
+  const c = cfg.custom || {};
+  const root = document.documentElement;
+  const palette = localStorage.getItem('lum_pal') || cfg.palette || 'black';
+  const isGlass = _GLASS_PALETTES.includes(palette);
+
+  if (c.accent) { root.style.setProperty('--accent', c.accent); root.style.setProperty('--accent-dark', c.accentDark || c.accent); }
+  if (c.text)   root.style.setProperty('--text', c.text);
+  if (c.bg)     root.style.setProperty('--bg', c.bg);
+
+  const s = document.getElementById('_custom_glass_style') ||
+    (() => { const el = document.createElement('style'); el.id = '_custom_glass_style'; document.head.appendChild(el); return el; })();
+
+  // Solo aplicar el override de vidrio en paletas que soportan ese efecto.
+  // Para paletas sólidas (negra, crema, etc.) limpiar siempre para no romper nada.
+  if (isGlass && (c.glassAlpha !== undefined || c.panelColor)) {
+    const a   = c.glassAlpha !== undefined ? +c.glassAlpha : 0.5;
+    const a2  = Math.min(a + 0.18, 1);
+    const hex = c.panelColor || '#ffffff';
+    const r   = parseInt(hex.slice(1,3), 16);
+    const g   = parseInt(hex.slice(3,5), 16);
+    const b   = parseInt(hex.slice(5,7), 16);
+    const rgb = `${r},${g},${b}`;
+    // html[data-palette] tiene especificidad [0,1,1,1] > [data-palette='X'] [0,1,1,0]
+    s.textContent = `
+      html[data-palette] .sidebar,
+      html[data-palette] .topbar,
+      html[data-palette] .table-card,
+      html[data-palette] .settings-card,
+      html[data-palette] .stat-card,
+      html[data-palette] .chart-card,
+      html[data-palette] .login-card,
+      html[data-palette] .client-row,
+      html[data-palette] .product-card { background: rgba(${rgb},${a}) !important; }
+      html[data-palette] .modal        { background: rgba(${rgb},${a2}) !important; }
+    `;
+  } else {
+    s.textContent = ''; // Limpiar — no afectar paletas sólidas
+  }
+}
+
+function setCustomAccent(color) {
+  const cfg = getConfig();
+  cfg.custom = cfg.custom || {};
+  cfg.custom.accent = color;
+  cfg.custom.accentDark = color;
+  DB.set('config', cfg);
+  applyCustomAppearance();
+}
+
+function setCustomText(color) {
+  const cfg = getConfig();
+  cfg.custom = cfg.custom || {};
+  cfg.custom.text = color;
+  DB.set('config', cfg);
+  applyCustomAppearance();
+}
+
+function setCustomBg(color) {
+  const cfg = getConfig();
+  cfg.custom = cfg.custom || {};
+  cfg.custom.bg = color;
+  DB.set('config', cfg);
+  applyCustomAppearance();
+}
+
+function setCustomPanelColor(hex) {
+  const cfg = getConfig();
+  cfg.custom = cfg.custom || {};
+  cfg.custom.panelColor = hex;
+  DB.set('config', cfg);
+  const el = document.getElementById('customPanelColorPicker');
+  if (el) el.value = hex;
+  applyCustomAppearance();
+}
+
+function setGlassAlpha(val) {
+  const cfg = getConfig();
+  cfg.custom = cfg.custom || {};
+  cfg.custom.glassAlpha = parseFloat(val);
+  DB.set('config', cfg);
+  applyCustomAppearance();
+  const lbl = document.getElementById('glassAlphaVal');
+  if (lbl) lbl.textContent = Math.round(parseFloat(val)*100) + '%';
+}
+
+function resetAppearance() {
+  const cfg = getConfig();
+  delete cfg.custom;
+  delete cfg.accent;
+  delete cfg.accentDark;
+  DB.set('config', cfg);
+  // Limpiar vars inline
+  const root = document.documentElement;
+  ['--accent','--accent-dark','--text','--bg'].forEach(v => root.style.removeProperty(v));
+  const s = document.getElementById('_custom_glass_style');
+  if (s) s.textContent = '';
+  loadSettingsPage();
+  showToast('Apariencia restablecida ✓');
 }
 
 function adminRestoreUser(userId) {
@@ -587,16 +1230,14 @@ async function adminImportUser() {
       if (msgEl) { msgEl.style.color = '#e07070'; msgEl.textContent = 'Documento encontrado pero no tiene usuarios.'; }
       return;
     }
-    const localUsers = DB.get('users');
-    if (localUsers.find(x => x.username === targetUser.username)) {
-      if (msgEl) { msgEl.style.color = '#e07070'; msgEl.textContent = `"${targetUser.username}" ya existe en las cuentas activas.`; }
-      return;
-    }
     // Add to global registry (user keeps their own Firestore doc)
     const regEntry = { id: targetUser.id, username: targetUser.username, storeName: targetUser.storeName || '' };
-    const existing = _adminAccounts || DB.get('users');
-    if (existing.find(a => a.username === regEntry.username)) {
-      if (msgEl) { msgEl.style.color = '#e07070'; msgEl.textContent = `"${regEntry.username}" ya existe en las cuentas activas.`; }
+    // Forzar sync antes de verificar para evitar falsos "ya existe"
+    const freshReg = await _pullRegistry();
+    _adminAccounts = freshReg?.accounts || DB.get('users');
+    if (_adminAccounts.find(a => a.username.toLowerCase() === regEntry.username.toLowerCase())) {
+      if (msgEl) { msgEl.style.color = '#e0a870'; msgEl.textContent = `"${regEntry.username}" ya está en cuentas activas. Pulsa ↻ Actualizar para verla.`; }
+      renderAdminPage();
       return;
     }
     _adminAccounts = [...existing, regEntry];
@@ -652,6 +1293,9 @@ function navigateTo(pageId) {
 
   // Close sidebar on mobile
   if (window.innerWidth <= 700) closeSidebar();
+
+  // Actualizar panel derecho (resalta la sección activa)
+  renderRightSidebar();
 
   // Page-specific init
   if (pageId === 'dashboard') renderDashboard();
@@ -731,16 +1375,18 @@ function refreshNavLabels() {
 // ─── SETTINGS PAGE ──────────────────────────
 function loadSettingsPage() {
   const cfg = getConfig();
-  const el = id => document.getElementById(id);
+  const c   = cfg.custom || {};
+  const el  = id => document.getElementById(id);
 
   if (el('settingStoreName')) el('settingStoreName').value = cfg.storeName || '';
-  if (el('settingCurrency')) el('settingCurrency').value = cfg.currency || '$';
+  // Moneda: leer del key independiente primero
+  if (el('settingCurrency')) el('settingCurrency').value = localStorage.getItem('lum_cur') || cfg.currency || '$';
   if (el('settingLowStock')) el('settingLowStock').value = cfg.lowStock || 5;
 
   // Palette cards
   const pal = cfg.palette || 'black';
-  document.querySelectorAll('.palette-card').forEach(c => {
-    c.classList.toggle('active', c.dataset.pal === pal);
+  document.querySelectorAll('.palette-card').forEach(c2 => {
+    c2.classList.toggle('active', c2.dataset.pal === pal);
   });
 
   // Font family
@@ -752,7 +1398,31 @@ function loadSettingsPage() {
     b.classList.toggle('active', b.dataset.size === fs);
   });
 
+  // Font weight buttons
+  const fw = cfg.fontWeight || 'normal';
+  document.querySelectorAll('.fontweight-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.fw === fw);
+  });
+
+  // Layout buttons
+  const lay = localStorage.getItem('lum_layout') || cfg.layout || 'default';
+  document.querySelectorAll('.layout-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.layout === lay);
+  });
+
+  // Apariencia avanzada — rellenar controles
+  if (el('customAccentPicker'))     el('customAccentPicker').value     = c.accent     || '#d4a97a';
+  if (el('customTextPicker'))       el('customTextPicker').value       = c.text       || '#f2f2f2';
+  if (el('customBgPicker'))         el('customBgPicker').value         = c.bg         || '#080808';
+  if (el('customPanelColorPicker')) el('customPanelColorPicker').value = c.panelColor || '#ffffff';
+  if (el('glassAlphaSlider')) {
+    const a = c.glassAlpha !== undefined ? c.glassAlpha : 0.5;
+    el('glassAlphaSlider').value = a;
+    if (el('glassAlphaVal')) el('glassAlphaVal').textContent = Math.round(a * 100) + '%';
+  }
+
   buildNavEditor();
+  renderVideoPicker();
 }
 
 // ─── PRODUCTS ───────────────────────────────
@@ -1048,37 +1718,65 @@ function deleteClient(clientId) {
   });
 }
 
+let _clientDebtFilter = 'all';
+
+function setClientFilter(f) {
+  _clientDebtFilter = f;
+  ['all','debt','ok'].forEach(k => {
+    const btn = document.getElementById(k === 'all' ? 'dfAll' : k === 'debt' ? 'dfDebt' : 'dfOk');
+    if (btn) btn.classList.toggle('active', k === f);
+  });
+  renderClients();
+}
+
 function renderClients() {
   const grid = document.getElementById('clientsGrid');
   if (!grid) return;
 
   const search = (document.getElementById('clientSearch')?.value || '').toLowerCase();
   const currency = getCurrency();
+  const sales = DB.get('sales');
+  const OVERDUE_DAYS = 42;
+  const now = Date.now();
 
   let clients = getClients();
   if (search) clients = clients.filter(c => c.name.toLowerCase().includes(search) || (c.phone || '').includes(search));
+
+  // Enrich each client with debt and overdue status
+  clients = clients.map(c => {
+    const clientSales = sales.filter(s => s.clientId === c.id);
+    const debt = clientSales.reduce((a, s) => a + getSaleRemaining(s), 0);
+    const lastPayTs = clientSales
+      .flatMap(s => s.payments || [])
+      .map(p => new Date(p.date).getTime())
+      .filter(t => !isNaN(t))
+      .reduce((max, t) => t > max ? t : max, 0);
+    const daysSince = lastPayTs ? Math.floor((now - lastPayTs) / 86400000) : Infinity;
+    const isOverdue = debt > 0.01 && daysSince > OVERDUE_DAYS;
+    return { ...c, _debt: debt, _isOverdue: isOverdue };
+  });
+
+  if (_clientDebtFilter === 'debt') clients = clients.filter(c => c._debt > 0.01);
+  else if (_clientDebtFilter === 'ok') clients = clients.filter(c => c._debt <= 0.01);
 
   if (!clients.length) {
     grid.innerHTML = `<div class="empty-state"><span class="empty-icon">◎</span><p>Sin clientes registrados.</p></div>`;
     return;
   }
 
-  const sales = DB.get('sales');
-
   grid.innerHTML = clients.map(c => {
-    const clientSales = sales.filter(s => s.clientId === c.id);
-    const debt = clientSales.reduce((a, s) => a + getSaleRemaining(s), 0);
     const initials = c.name.split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase();
+    const overdueClass = c._isOverdue ? ' overdue' : '';
     return `
-      <div class="client-row" onclick="openClientDetail('${c.id}')">
+      <div class="client-row${overdueClass}" onclick="openClientDetail('${c.id}')">
         <div class="client-avatar">${initials}</div>
         <div class="client-info">
-          <p class="client-name">${c.name}</p>
+          <p class="client-name">${c.name}${c._isOverdue ? ' <span class="overdue-badge">+42 días</span>' : ''}</p>
           <p class="client-detail">${c.phone || c.email || 'Sin contacto'}</p>
         </div>
         <div>
-          ${debt > 0
-            ? `<p class="client-debt">${currency}${fmtN(debt)}<br><small style="font-size:0.72rem;font-family:DM Sans">debe</small></p>`
+          ${c._debt > 0
+            ? `<p class="client-debt">${currency}${fmtN(c._debt)}<br><small style="font-size:0.72rem;font-family:DM Sans">debe</small></p>`
             : `<p class="client-debt zero">Al día ✓</p>`}
         </div>
       </div>`;

@@ -23,16 +23,20 @@
 
     <div id="loginForm" class="auth-form">
       <h2>Iniciar Sesión</h2>
-      <div class="input-group">
-        <input type="text" id="loginUser" placeholder="Usuario" autocomplete="username" />
-      </div>
-      <div class="input-group">
-        <input type="password" id="loginPass" placeholder="Contraseña" autocomplete="current-password" />
-      </div>
-      <label class="remember-label">
-        <input type="checkbox" id="rememberMe" /> Recordar sesión
-      </label>
-      <button class="btn-primary" onclick="handleLogin()">Entrar</button>
+      <form onsubmit="event.preventDefault(); handleLogin()" autocomplete="on">
+        <div class="input-group">
+          <input type="text"     id="loginUser" name="username" placeholder="Usuario"
+                 autocomplete="username" />
+        </div>
+        <div class="input-group">
+          <input type="password" id="loginPass" name="password" placeholder="Contraseña"
+                 autocomplete="current-password" />
+        </div>
+        <label class="remember-label">
+          <input type="checkbox" id="rememberMe" /> Recordar sesión
+        </label>
+        <button type="submit" class="btn-primary">Entrar</button>
+      </form>
       <p class="auth-switch">¿Sin cuenta? <a href="#" onclick="toggleAuthMode('register')">Registrarse</a></p>
       <p id="loginError" class="error-msg"></p>
       <button type="button" class="btn-admin-link" onclick="toggleAuthMode('admin')">⚙ Administrador</button>
@@ -40,13 +44,17 @@
 
     <div id="adminLoginForm" class="auth-form hidden">
       <h2>⚙ Administrador</h2>
-      <div class="input-group">
-        <input type="text" id="adminLoginUser" placeholder="Usuario" autocomplete="username" />
-      </div>
-      <div class="input-group">
-        <input type="password" id="adminLoginPass" placeholder="Contraseña" autocomplete="current-password" />
-      </div>
-      <button class="btn-primary" onclick="handleAdminLogin()">Entrar como Admin</button>
+      <form onsubmit="event.preventDefault(); handleAdminLogin()" autocomplete="on">
+        <div class="input-group">
+          <input type="text"     id="adminLoginUser" name="username" placeholder="Usuario"
+                 autocomplete="username" />
+        </div>
+        <div class="input-group">
+          <input type="password" id="adminLoginPass" name="password" placeholder="Contraseña"
+                 autocomplete="current-password" />
+        </div>
+        <button type="submit" class="btn-primary">Entrar como Admin</button>
+      </form>
       <p class="auth-switch"><a href="#" onclick="toggleAuthMode('login')">← Volver</a></p>
       <p id="adminLoginError" class="error-msg"></p>
     </div>
@@ -128,6 +136,9 @@
       <button class="topbar-logout" onclick="logout()" title="Cerrar sesión">⟶</button>
     </div>
   </div>
+
+  <!-- PANEL DERECHO — navegación rápida bicolumna -->
+  <aside id="rightSidebar" class="right-sidebar"></aside>
 
   <!-- PAGES CONTAINER -->
   <main class="pages-container">
@@ -224,6 +235,11 @@
 
       <div class="filter-bar">
         <input type="text" id="clientSearch" placeholder="Buscar cliente..." oninput="renderClients()" />
+        <div class="debt-filter-btns">
+          <button class="debt-filter-btn active" id="dfAll" onclick="setClientFilter('all')">Todos</button>
+          <button class="debt-filter-btn" id="dfDebt" onclick="setClientFilter('debt')">Con deuda</button>
+          <button class="debt-filter-btn" id="dfOk" onclick="setClientFilter('ok')">Al día</button>
+        </div>
       </div>
 
       <div class="clients-list" id="clientsGrid"></div>
@@ -387,6 +403,15 @@
               </div>
               <div class="palette-label">Perla</div>
             </button>
+            <button class="palette-card" data-pal="lavanda" onclick="setPalette('lavanda')">
+              <div class="palette-preview">
+                <span style="background:#2b2f38"></span>
+                <span style="background:rgba(255,255,255,0.32)"></span>
+                <span style="background:rgba(210,235,255,0.55)"></span>
+                <span style="background:#f0f0f0"></span>
+              </div>
+              <div class="palette-label">Lluvia</div>
+            </button>
           </div>
 
           <div class="setting-row" style="margin-top:1.25rem">
@@ -406,6 +431,78 @@
               <button class="btn-secondary fontsize-btn" data-size="large" onclick="setFontSize('large')" title="Grande">A+</button>
             </div>
           </div>
+          <div class="setting-row">
+            <span>Grosor de texto</span>
+            <div class="font-size-group">
+              <button class="btn-secondary fontweight-btn active" data-fw="normal" onclick="setFontWeight('normal')" title="Normal" style="font-weight:400">A</button>
+              <button class="btn-secondary fontweight-btn" data-fw="medium" onclick="setFontWeight('medium')" title="Seminegrita" style="font-weight:500">A</button>
+              <button class="btn-secondary fontweight-btn" data-fw="bold" onclick="setFontWeight('bold')" title="Negrita" style="font-weight:700">A</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <span>Distribución</span>
+            <div class="font-size-group">
+              <button class="btn-secondary layout-btn active" data-layout="default"
+                      onclick="setLayout('default')" title="Normal — sidebar izquierdo">⊟ Normal</button>
+              <button class="btn-secondary layout-btn" data-layout="dual"
+                      onclick="setLayout('dual')" title="Bicolumna — nav izquierda y derecha">⊞ Bicolumna</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-card" id="videoBgCard">
+          <h3>Video de fondo</h3>
+          <p class="setting-hint">Aplica con la paleta <strong>Lluvia</strong>. Se guarda en este navegador.</p>
+          <div class="video-picker" id="videoPicker"></div>
+        </div>
+
+        <div class="settings-card">
+          <h3>Apariencia avanzada</h3>
+          <p class="setting-hint">Personaliza colores, transparencia y más. Solo afecta a este dispositivo.</p>
+
+          <div class="adv-row">
+            <label>Color de acento</label>
+            <input type="color" id="customAccentPicker" value="#d4a97a"
+                   oninput="setCustomAccent(this.value)" />
+          </div>
+          <div class="adv-row">
+            <label>Color de texto</label>
+            <input type="color" id="customTextPicker" value="#f2f2f2"
+                   oninput="setCustomText(this.value)" />
+          </div>
+          <div class="adv-row">
+            <label>Color de fondo</label>
+            <input type="color" id="customBgPicker" value="#080808"
+                   oninput="setCustomBg(this.value)" />
+          </div>
+          <div class="adv-row">
+            <label>Color de paneles</label>
+            <div style="display:flex;align-items:center;gap:0.5rem">
+              <input type="color" id="customPanelColorPicker" value="#ffffff"
+                     oninput="setCustomPanelColor(this.value)" />
+              <button class="btn-secondary btn-sm" onclick="setCustomPanelColor('#ffffff')" title="Blanco">○</button>
+              <button class="btn-secondary btn-sm" onclick="setCustomPanelColor('#1a1a2e')" title="Azul oscuro">◉</button>
+              <button class="btn-secondary btn-sm" onclick="setCustomPanelColor('#0a1a0a')" title="Verde oscuro">▣</button>
+            </div>
+          </div>
+          <div class="adv-row" style="flex-direction:column;align-items:flex-start;gap:0.3rem">
+            <label style="width:100%;display:flex;justify-content:space-between">
+              Solidez de paneles
+              <span>
+                <span id="glassAlphaVal" style="font-weight:600">50%</span>
+                <button class="btn-secondary btn-sm" style="margin-left:0.4rem" onclick="setGlassAlpha(0.15)">Vidrio</button>
+                <button class="btn-secondary btn-sm" style="margin-left:0.25rem" onclick="setGlassAlpha(0.55)">Semi</button>
+                <button class="btn-secondary btn-sm" style="margin-left:0.25rem" onclick="setGlassAlpha(1)">Sólido</button>
+              </span>
+            </label>
+            <input type="range" id="glassAlphaSlider" min="0.05" max="1" step="0.01" value="0.5"
+                   style="width:100%" oninput="setGlassAlpha(this.value)" />
+            <small style="color:var(--text3)">Izquierda = cristal transparente · Derecha = panel sólido opaco</small>
+          </div>
+
+          <button class="btn-secondary" style="margin-top:0.85rem" onclick="resetAppearance()">
+            ↩ Restablecer apariencia
+          </button>
         </div>
 
         <div class="settings-card">
@@ -653,6 +750,24 @@
   </div>
 </div>
 
+<!-- MODAL ANUNCIO DEL ADMIN -->
+<div id="announcementModal" class="modal-overlay hidden">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <h2>📢 Mensaje del Administrador</h2>
+      <button onclick="closeModal('announcementModal')">✕</button>
+    </div>
+    <div class="modal-body" style="text-align:center">
+      <img id="annModalImg" class="hidden" style="max-width:100%;max-height:220px;border-radius:10px;margin-bottom:1rem;object-fit:contain" />
+      <p id="annModalText" style="font-size:0.95rem;line-height:1.6;color:var(--text);white-space:pre-wrap"></p>
+      <p id="annModalDate" style="font-size:0.72rem;color:var(--text3);margin-top:0.75rem"></p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="closeModal('announcementModal')">Entendido</button>
+    </div>
+  </div>
+</div>
+
 <!-- jsPDF para exportar PDF descargable -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.6.0/jspdf.plugin.autotable.min.js"></script>
@@ -662,6 +777,20 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <!-- Configuración y sincronización de LUMIÈRE -->
 <script src="firebase-config.js"></script>
+<!-- INPUT oculto para subir video de fondo -->
+<input type="file" id="videoBgInput" accept="video/*" class="hidden"
+       onchange="handleVideoUpload(this.files[0])" />
+<!-- INPUT oculto para imagen de fondo del admin -->
+<input type="file" id="adminBgInput" accept="image/*" class="hidden"
+       onchange="uploadAdminBg(this.files[0])" />
+
+<!-- VIDEO DE FONDO — visible solo con paleta "Lluvia" -->
+<div id="bgVideoWrap" class="hidden">
+  <video id="bgVideo" autoplay muted loop playsinline preload="metadata">
+    <source id="bgVideoSrc" src="" type="video/mp4" />
+  </video>
+</div>
+
 <script src="firebase-sync.js"></script>
 <script src="app.js"></script>
 </body>
