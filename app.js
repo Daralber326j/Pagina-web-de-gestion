@@ -405,7 +405,7 @@ async function handleAdminLogin() {
   }
   isAdminSession = true;
   localStorage.setItem('lum_session', JSON.stringify({ username: u, password: p, isAdmin: true }));
-  // Pull latest data (including any newly registered users) before entering admin panel
+  localStorage.removeItem('lum_pal'); // limpiar para que Firestore tome prioridad
   if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
     await CloudSync.pull(ADMIN_CREDS.username);
   }
@@ -455,7 +455,8 @@ async function loginSuccess(user) {
     loadSettingsPage();
     refreshNavLabels();
     _updateLastSeen(user.username);
-    _checkAndShowAnnouncement();
+    // Pequeño retraso para que la app termine de cargar antes de mostrar el anuncio
+    setTimeout(() => _checkAndShowAnnouncement(), 1200);
   } else {
     // Admin: solo inicializar lum_pal si no hay valor previo en esta sesión
     if (!localStorage.getItem('lum_pal')) {
@@ -476,7 +477,7 @@ async function handleLogin() {
   const btn = document.querySelector('#loginForm .btn-primary');
   if (btn) { btn.disabled = true; btn.textContent = 'Verificando…'; }
 
-  // Pull from this user's own Firestore document (each user has separate data)
+  // Pull desde Firestore antes de verificar — trae datos actualizados de otros dispositivos
   if (typeof CloudSync !== 'undefined') await CloudSync.pull(u);
 
   const users = DB.get('users');
@@ -485,6 +486,11 @@ async function handleLogin() {
   if (btn) { btn.disabled = false; btn.textContent = 'Entrar'; }
 
   if (!user) { err.textContent = 'Usuario o contraseña incorrectos.'; return; }
+
+  // Login explícito: limpiar lum_pal para que se aplique la paleta guardada en Firestore
+  // Esto garantiza que los cambios de otro dispositivo se sincronicen
+  localStorage.removeItem('lum_pal');
+  localStorage.removeItem('lum_layout');
 
   localStorage.setItem('lum_session', JSON.stringify({ username: u, password: p }));
   err.textContent = '';
@@ -939,7 +945,12 @@ function setAdminTheme(theme) {
     setPalette(restorePal);
   }
 
-  applyVideoBg();
+  // Limpiar imagen inmediatamente para que no quede la de la plantilla anterior
+  const el = document.getElementById('adminBgLayer');
+  if (el) { el.style.backgroundImage = 'none'; el.style.opacity = '0'; }
+
+  applyAdminBg();   // carga imagen de la NUEVA plantilla
+  applyVideoBg();   // carga video de la NUEVA plantilla
   renderAdminPage();
 }
 
@@ -1066,25 +1077,19 @@ function _currentAdminTheme() {
   return localStorage.getItem('lum_adminTheme') || 'default';
 }
 
+// applyAdminBg usa body::before con variable CSS --admin-bg-img
+// Esto garantiza que la imagen aparece detrás de todo el contenido del admin
+// sin conflictos de z-index ni fondos sólidos que la tapen.
 async function applyAdminBg() {
   const theme = _currentAdminTheme();
   const blob  = await _adminDBGet('lum_adminbg2', theme);
-  let el = document.getElementById('adminBgLayer');
 
   if (!blob) {
-    if (el) { el.style.backgroundImage = 'none'; el.style.opacity = '0'; }
+    document.documentElement.style.removeProperty('--admin-bg-img');
     return;
   }
   if (!_adminBgURLs[theme]) _adminBgURLs[theme] = URL.createObjectURL(blob);
-
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'adminBgLayer';
-    el.style.cssText = 'position:fixed;inset:0;z-index:0;pointer-events:none;transition:opacity 0.4s;background-size:cover;background-position:center';
-    document.body.prepend(el);
-  }
-  el.style.backgroundImage = `url(${_adminBgURLs[theme]})`;
-  el.style.opacity = document.body.hasAttribute('data-admin-mode') ? '1' : '0';
+  document.documentElement.style.setProperty('--admin-bg-img', `url("${_adminBgURLs[theme]}")`);
 }
 
 async function uploadAdminBg(file) {
@@ -1102,8 +1107,7 @@ async function removeAdminBg() {
   const theme = _currentAdminTheme();
   await _adminDBDel('lum_adminbg2', theme);
   if (_adminBgURLs[theme]) { URL.revokeObjectURL(_adminBgURLs[theme]); delete _adminBgURLs[theme]; }
-  const el = document.getElementById('adminBgLayer');
-  if (el) el.style.opacity = '0';
+  document.documentElement.style.removeProperty('--admin-bg-img');
   await renderAdminBgPicker();
   showToast('Imagen eliminada');
 }

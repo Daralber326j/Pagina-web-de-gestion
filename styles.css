@@ -1251,11 +1251,19 @@ body[data-admin-mode] .hamburger { color: #00aaff; }
 
 body[data-admin-mode] .pages-container { background: #020210; }
 
-/* Garantizar que el contenido admin siempre esté encima de las capas de fondo */
-body[data-admin-mode] .app,
-body[data-admin-mode] .sidebar,
-body[data-admin-mode] .topbar,
-body[data-admin-mode] .pages-container { position: relative; z-index: 1; }
+/* Imagen de fondo del admin — se pone como pseudo-elemento del body para estar detrás de todo */
+body[data-admin-mode]::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image: var(--admin-bg-img, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  pointer-events: none;
+  opacity: 0.92;
+}
 
 body[data-admin-mode] #page-admin {
   position: relative;
