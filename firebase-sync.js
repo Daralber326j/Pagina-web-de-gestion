@@ -10,8 +10,11 @@ const CloudSync = {
            firebase.apps && firebase.apps.length > 0;
   },
 
-  _userId:     null,
-  _pushTimer:  null,
+  _userId:        null,
+  _pushTimer:     null,
+  _listener:      null,
+  _lastPushAt:    0,
+  _onRemoteUpdate: null,
   COLLECTION:  'stores',
   KEYS: ['products', 'clients', 'sales', 'config', 'users', 'activityLog', 'navLabels', 'trash'],
 
@@ -29,20 +32,21 @@ const CloudSync = {
     this._userId = null;
     clearTimeout(this._pushTimer);
     this._pushTimer = null;
+    this.stopListener();
   },
 
   // ─── PUSH (local → nube) ────────────────────
-  // Llámalo con debounce para no saturar Firestore
   schedulePush() {
     if (!this.enabled || !this._userId) return;
     clearTimeout(this._pushTimer);
-    this._pushTimer = setTimeout(() => this.push(), 1800);
+    this._pushTimer = setTimeout(() => this.push(), 600);
   },
 
   async push() {
     if (!this.enabled || !this._userId) return;
     try {
       this._setStatus('syncing');
+      this._lastPushAt = Date.now();
       const data = { syncedAt: new Date().toISOString() };
       this.KEYS.forEach(k => {
         const raw = localStorage.getItem('lum_' + k);
@@ -133,6 +137,46 @@ const CloudSync = {
     } catch(e) {
       console.warn('[CloudSync] Error al crear tienda en la nube:', e.message);
     }
+  },
+
+  // ─── LISTENER EN TIEMPO REAL (nube → local) ─────────────────────
+  startListener(onUpdate) {
+    if (!this.enabled || !this._userId) return;
+    this.stopListener();
+    this._onRemoteUpdate = onUpdate;
+    const db = firebase.firestore();
+    this._listener = db.collection(this.COLLECTION)
+      .doc(this._docId(this._userId))
+      .onSnapshot({ includeMetadataChanges: false }, doc => {
+        if (!doc.exists || doc.metadata.hasPendingWrites) return;
+        // Ignorar cambios que nosotros acabamos de hacer (< 5 segundos)
+        if (Date.now() - this._lastPushAt < 5000) return;
+        const data = doc.data();
+        let changed = false;
+        this.KEYS.forEach(k => {
+          if (data[k] !== undefined) {
+            const newVal = JSON.stringify(data[k]);
+            if (localStorage.getItem('lum_' + k) !== newVal) {
+              localStorage.setItem('lum_' + k, newVal);
+              changed = true;
+            }
+          }
+        });
+        // Sincronizar también paleta y layout desde config
+        if (data.config && changed) {
+          if (data.config.palette) localStorage.setItem('lum_pal', data.config.palette);
+          if (data.config.layout)  localStorage.setItem('lum_layout', data.config.layout);
+        }
+        if (changed && typeof this._onRemoteUpdate === 'function') {
+          this._onRemoteUpdate();
+        }
+      }, err => {
+        console.warn('[CloudSync] Listener error:', err.message);
+      });
+  },
+
+  stopListener() {
+    if (this._listener) { this._listener(); this._listener = null; }
   },
 
   // Muestra el estado inicial cuando el usuario inicia sesión

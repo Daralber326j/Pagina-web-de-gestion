@@ -398,6 +398,9 @@ async function checkAutoLogin() {
         await CloudSync.pull(s.username);
         if (sub) sub.textContent = 'Sistema de Gestión';
       }
+      // Limpiar preferencias locales para que Firestore tenga prioridad
+      localStorage.removeItem('lum_pal');
+      localStorage.removeItem('lum_layout');
       const users = DB.get('users');
       const u = users.find(u => u.username === s.username && u.password === s.password);
       if (u) { loginSuccess(u); return; }
@@ -467,6 +470,15 @@ async function loginSuccess(user) {
     refreshNavLabels();
     _updateLastSeen(user.username);
     _startPresenceHeartbeat(user.username);
+    // Listener en tiempo real: actualiza UI cuando otro dispositivo hace cambios
+    if (typeof CloudSync !== 'undefined') {
+      CloudSync.startListener(() => {
+        applySettings();
+        const activePage = document.querySelector('.page.active');
+        if (activePage) navigateTo(activePage.id.replace('page-', ''));
+        showToast('↻ Datos actualizados desde otro dispositivo');
+      });
+    }
     // Pequeño retraso para que la app termine de cargar antes de mostrar el anuncio
     setTimeout(() => _checkAndShowAnnouncement(), 1200);
   } else {
@@ -960,6 +972,9 @@ function setAdminTheme(theme) {
 
   // Limpiar imagen de la plantilla anterior antes de cargar la nueva
   document.body.style.removeProperty('background-image');
+  document.body.style.removeProperty('background-size');
+  document.body.style.removeProperty('background-position');
+  document.body.style.removeProperty('background-attachment');
   document.body.classList.remove('has-admin-bg');
 
   applyAdminBg();   // carga imagen de la NUEVA plantilla
@@ -1106,10 +1121,11 @@ async function applyAdminBg() {
   if (!_adminBgURLs[theme]) _adminBgURLs[theme] = URL.createObjectURL(blob);
   const imgUrl = `url("${_adminBgURLs[theme]}")`;
   document.documentElement.style.setProperty('--admin-bg-img', imgUrl);
-  document.body.style.backgroundImage = imgUrl;
-  document.body.style.backgroundSize = 'cover';
-  document.body.style.backgroundPosition = 'center';
-  document.body.style.backgroundAttachment = 'fixed';
+  // setProperty con 'important' para ganar sobre background:!important de los temas
+  document.body.style.setProperty('background-image', imgUrl, 'important');
+  document.body.style.setProperty('background-size', 'cover', 'important');
+  document.body.style.setProperty('background-position', 'center', 'important');
+  document.body.style.setProperty('background-attachment', 'fixed', 'important');
   document.body.classList.add('has-admin-bg');
 }
 

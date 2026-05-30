@@ -699,7 +699,7 @@
 #bgVideoWrap {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: -1;
   overflow: hidden;
   background: #2b2f38;
   pointer-events: none; /* nunca bloquea clics/taps — crítico en móvil */
