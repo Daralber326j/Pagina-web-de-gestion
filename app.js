@@ -340,6 +340,21 @@ async function _pushRegistry(updates) {
   } catch(e) { console.warn('[Registry]', e.message); }
 }
 
+// Usa update() con dot-notation para escribir lastSeen.username como campo anidado
+// set() con merge:true NO interpreta la clave 'a.b' como campo anidado, solo update() lo hace
+async function _updateLastSeen(username) {
+  if (typeof CloudSync === 'undefined' || !CloudSync.enabled) return;
+  try {
+    const db = firebase.firestore();
+    await db.collection('stores').doc('_registry').update({
+      [`lastSeen.${username}`]: Date.now()
+    });
+  } catch(e) {
+    // El documento puede no existir todavía — fallback con set+merge en objeto anidado
+    await _pushRegistry({ lastSeen: { [username]: Date.now() } });
+  }
+}
+
 let _adminAccounts = null; // cache for admin panel account list
 
 async function checkAutoLogin() {
@@ -442,7 +457,7 @@ async function loginSuccess(user) {
     }
     loadSettingsPage();
     refreshNavLabels();
-    _pushRegistry({ [`lastSeen.${user.username}`]: Date.now() }).catch(() => {});
+    _updateLastSeen(user.username);
     _checkAndShowAnnouncement();
   } else {
     // Admin: solo inicializar lum_pal si no hay valor previo en esta sesión
@@ -528,9 +543,9 @@ async function handleRegister() {
 function logout() {
   if (typeof CloudSync !== 'undefined') CloudSync.clearUser();
   localStorage.removeItem('lum_session');
-  // Limpiar claves de sesión para que el próximo usuario empiece limpio
   localStorage.removeItem('lum_pal');
   localStorage.removeItem('lum_layout');
+  localStorage.removeItem('lum_seenAnn'); // legado, por si existe
   currentUser = null;
   isAdminSession = false;
   _adminAccounts = null;
@@ -622,6 +637,7 @@ async function renderAdminPage() {
           <span class="admin-last-seen-when">🕐 ${seen.when}</span>
         </div>
         <div class="admin-user-actions">
+          <button class="btn-secondary btn-sm" onclick="adminViewPassword('${u.username}')">👁</button>
           <button class="btn-secondary btn-sm" onclick="openChangePassword('${u.id}','${u.username}')">Contraseña</button>
           <button class="btn-danger btn-sm" onclick="adminDeleteUser('${u.id}','${u.username}')">Eliminar</button>
         </div>
@@ -678,7 +694,24 @@ async function renderAdminPage() {
       <div style="margin-top:0.85rem">
         <textarea id="annText" rows="3" placeholder="Escribe tu mensaje para todos los usuarios…"
           style="width:100%;resize:vertical;margin-bottom:0.5rem;border-radius:var(--radius-sm);padding:0.6rem;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:var(--font-body);font-size:0.85rem">${currentAnn?.text || ''}</textarea>
-        <div id="annImgPreview" style="margin-bottom:0.5rem">${currentAnn?.imageB64 ? '' : ''}</div>
+        <div id="annImgPreview" style="margin-bottom:0.5rem"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.55rem">
+          <div>
+            <label style="font-size:0.75rem;color:var(--text3);display:block;margin-bottom:2px">Mostrar X veces por usuario</label>
+            <input type="number" id="annRepeat" min="1" max="99" value="${currentAnn?.repeatCount||1}" style="width:100%" />
+          </div>
+          <div>
+            <label style="font-size:0.75rem;color:var(--text3);display:block;margin-bottom:2px">Intervalo entre apariciones</label>
+            <select id="annInterval" style="width:100%">
+              <option value="0"   ${(!currentAnn?.intervalHours)?'selected':''}>Sin intervalo</option>
+              <option value="1"   ${currentAnn?.intervalHours==1  ?'selected':''}>1 hora</option>
+              <option value="6"   ${currentAnn?.intervalHours==6  ?'selected':''}>6 horas</option>
+              <option value="24"  ${currentAnn?.intervalHours==24 ?'selected':''}>1 día</option>
+              <option value="72"  ${currentAnn?.intervalHours==72 ?'selected':''}>3 días</option>
+              <option value="168" ${currentAnn?.intervalHours==168?'selected':''}>1 semana</option>
+            </select>
+          </div>
+        </div>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
           <button class="btn-secondary btn-sm" onclick="document.getElementById('annImgInput').click()">📷 Foto</button>
           <input type="file" id="annImgInput" accept="image/*" class="hidden" onchange="previewAnnImage(event)" />
@@ -834,7 +867,15 @@ async function publishAnnouncement() {
   if (!text && !_annPendingImageB64) {
     showToast('Escribe un mensaje o adjunta una foto', true); return;
   }
-  const ann = { id: uid(), text, imageB64: _annPendingImageB64 || null, date: Date.now() };
+  const repeatCount   = parseInt(document.getElementById('annRepeat')?.value) || 1;
+  const intervalHours = parseFloat(document.getElementById('annInterval')?.value) || 0;
+  const ann = {
+    id: uid(), text,
+    imageB64: _annPendingImageB64 || null,
+    date: Date.now(),
+    repeatCount,
+    intervalHours,
+  };
   await _pushRegistry({ announcement: ann });
   _annPendingImageB64 = null;
   showToast('Anuncio publicado ✓');
@@ -851,10 +892,25 @@ async function _checkAndShowAnnouncement() {
   const reg = await _pullRegistry();
   const ann = reg?.announcement;
   if (!ann?.id) return;
-  const seenId = localStorage.getItem('lum_seenAnn');
-  if (seenId === ann.id) return;
-  localStorage.setItem('lum_seenAnn', ann.id);
-  // Mostrar en modal de anuncio
+
+  // Tracking por anuncio: cuántas veces se ha mostrado y cuándo fue la última
+  const key     = `lum_ann_${ann.id}`;
+  const tracked = JSON.parse(localStorage.getItem(key) || '{"seen":0,"lastShown":0}');
+  const maxShows    = Math.max(1, parseInt(ann.repeatCount) || 1);
+  const intervalMs  = ((parseFloat(ann.intervalHours) || 0) * 3600000);
+  const now         = Date.now();
+
+  // ¿Ya se mostró suficientes veces?
+  if (tracked.seen >= maxShows) return;
+  // ¿Hay intervalo y aún no ha pasado el tiempo desde la última vez?
+  if (tracked.seen > 0 && intervalMs > 0 && (now - tracked.lastShown) < intervalMs) return;
+
+  // Registrar esta aparición
+  tracked.seen++;
+  tracked.lastShown = now;
+  localStorage.setItem(key, JSON.stringify(tracked));
+  localStorage.removeItem('lum_seenAnn'); // limpiar clave legada
+
   const box = document.getElementById('announcementModal');
   if (!box) return;
   document.getElementById('annModalText').textContent = ann.text || '';
@@ -1313,6 +1369,35 @@ async function adminImportUser() {
     renderAdminPage();
   } catch(e) {
     if (msgEl) { msgEl.style.color = '#e07070'; msgEl.textContent = `Error: ${e.message}`; }
+  }
+}
+
+async function adminViewPassword(username) {
+  // Buscar primero en usuarios locales
+  const localUser = DB.get('users').find(u => u.username === username);
+  if (localUser?.password) {
+    confirm2(`Contraseña de "${username}"`,
+      `La contraseña guardada es:\n\n${localUser.password}`,
+      () => {});
+    return;
+  }
+  // Buscar en Firestore si CloudSync está activo
+  if (typeof CloudSync === 'undefined' || !CloudSync.enabled) {
+    showToast('No hay contraseña local para este usuario', true); return;
+  }
+  try {
+    const db = firebase.firestore();
+    const docId = username.toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 128);
+    const snap = await db.collection('stores').doc(docId).get();
+    if (!snap.exists) { showToast('Documento no encontrado en la nube', true); return; }
+    const users = snap.data().users || [];
+    const u = users.find(x => x.username === username) || users[0];
+    if (!u?.password) { showToast('Contraseña no encontrada', true); return; }
+    confirm2(`Contraseña de "${username}"`,
+      `La contraseña guardada es:\n\n${u.password}`,
+      () => {});
+  } catch(e) {
+    showToast('Error: ' + e.message, true);
   }
 }
 
