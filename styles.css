@@ -702,12 +702,14 @@
   z-index: 0;
   overflow: hidden;
   background: #2b2f38;
+  pointer-events: none; /* nunca bloquea clics/taps — crítico en móvil */
 }
 #bgVideo {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  pointer-events: none;
 }
 
 /* ── VIDEO PICKER ──────────────────────────────────────────────── */
@@ -1248,6 +1250,12 @@ body[data-admin-mode] .topbar-logout:hover { color: #00ccff; }
 body[data-admin-mode] .hamburger { color: #00aaff; }
 
 body[data-admin-mode] .pages-container { background: #020210; }
+
+/* Garantizar que el contenido admin siempre esté encima de las capas de fondo */
+body[data-admin-mode] .app,
+body[data-admin-mode] .sidebar,
+body[data-admin-mode] .topbar,
+body[data-admin-mode] .pages-container { position: relative; z-index: 1; }
 
 body[data-admin-mode] #page-admin {
   position: relative;
@@ -2384,6 +2392,8 @@ html[data-fontweight="bold"] button { font-weight: 600; }
   font-size: 0.88rem;
   font-weight: 500;
   cursor: pointer;
+  touch-action: manipulation; /* elimina el delay de 300ms en móvil */
+  -webkit-tap-highlight-color: transparent;
   letter-spacing: 0.04em;
   transition: background 0.2s, transform 0.1s;
   white-space: nowrap;
@@ -2398,6 +2408,8 @@ html[data-fontweight="bold"] button { font-weight: 600; }
   border-radius: var(--radius-sm);
   padding: 0.65rem 1.2rem;
   font-size: 0.85rem;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   cursor: pointer;
   transition: background 0.2s;
   white-space: nowrap;

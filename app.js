@@ -195,25 +195,22 @@ async function _delVidBlob() {
 }
 
 async function applyVideoBg(palette) {
+  const inAdminMode = document.body.hasAttribute('data-admin-mode');
+
+  if (inAdminMode) {
+    // Admin: cada plantilla tiene su propio video en lum_adminvid2
+    await applyAdminThemeVideo();
+    return;
+  }
+
+  // Usuario normal: video solo cuando paleta activa = lavanda (lum_vidstore)
   const wrap  = document.getElementById('bgVideoWrap');
   const video = document.getElementById('bgVideo');
   const src   = document.getElementById('bgVideoSrc');
   if (!wrap || !video || !src) return;
 
-  const inAdminMode = document.body.hasAttribute('data-admin-mode');
-  let shouldShow;
-
-  if (inAdminMode) {
-    // Admin: el video solo aparece cuando el tema es explícitamente 'lluvia'.
-    // Cambia de tema → video desaparece, sin importar qué paleta haya en el config.
-    shouldShow = localStorage.getItem('lum_adminTheme') === 'lluvia';
-  } else {
-    // Usuario normal: video solo si su paleta activa es lavanda
-    const pal = palette || localStorage.getItem('lum_pal') || getConfig().palette || 'black';
-    shouldShow = pal === 'lavanda';
-  }
-
-  if (!shouldShow) {
+  const pal = palette || localStorage.getItem('lum_pal') || getConfig().palette || 'black';
+  if (pal !== 'lavanda') {
     wrap.classList.add('hidden');
     video.pause();
     return;
@@ -782,10 +779,10 @@ async function renderAdminPage() {
           </span>
           ${t.label}
         </button>`).join('')}
-      ${(localStorage.getItem('lum_adminTheme')||'default')==='lluvia'
-        ? `<div style="margin-top:0.85rem"><h4 style="font-size:0.8rem;color:var(--text3);margin-bottom:0.4rem">Video de fondo (paleta Lluvia)</h4><div id="adminLluviaVideoPicker"></div></div>`
+      ${_VIDEO_THEMES.includes(localStorage.getItem('lum_adminTheme')||'default')
+        ? `<div style="margin-top:0.85rem"><h4 style="font-size:0.8rem;color:var(--text3);margin-bottom:0.4rem">🎬 Video de fondo (esta plantilla)</h4><div id="adminVidPickerWrap"></div></div>`
         : ''}
-      <h4 style="font-size:0.82rem;margin:1rem 0 0.4rem;color:var(--text3)">Imagen de fondo</h4>
+      <h4 style="font-size:0.82rem;margin:1rem 0 0.4rem;color:var(--text3)">🖼 Imagen de fondo (esta plantilla)</h4>
       <div id="adminBgPickerWrap"></div>
     </div>
     <div class="admin-section">
@@ -804,8 +801,8 @@ async function renderAdminPage() {
     </div>`;
   // Poblar pickers asíncronos tras render
   renderAdminBgPicker();
-  if ((localStorage.getItem('lum_adminTheme')||'default') === 'lluvia') {
-    renderVideoPicker('adminLluviaVideoPicker');
+  if (_VIDEO_THEMES.includes(localStorage.getItem('lum_adminTheme')||'default')) {
+    renderAdminVidPicker();
   }
 }
 
@@ -1022,76 +1019,91 @@ function setFontWeight(w) {
   });
 }
 
-// ── IMAGEN DE FONDO ADMIN (IndexedDB) ───────────────────────────────
-async function _openAdminBgDB() {
+// ── FONDOS DEL ADMIN POR PLANTILLA (IndexedDB) ──────────────────────
+// Cada plantilla tiene su propia imagen y (si aplica) su propio video.
+// DB de imágenes: 'lum_adminbg2'  · clave = nombre del tema
+// DB de videos:   'lum_adminvid2' · clave = nombre del tema
+
+function _openAdminDB(dbName) {
   return new Promise((res, rej) => {
-    const req = indexedDB.open('lum_adminbg', 1);
-    req.onupgradeneeded = e => e.target.result.createObjectStore('bg');
+    const req = indexedDB.open(dbName, 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore('data');
     req.onsuccess = e => res(e.target.result);
     req.onerror = e => rej(e.target.error);
   });
 }
-async function _saveAdminBgBlob(blob) {
-  const db = await _openAdminBgDB();
-  return new Promise((res, rej) => {
-    const tx = db.transaction('bg', 'readwrite');
-    tx.objectStore('bg').put(blob, 'img');
-    tx.oncomplete = res; tx.onerror = rej;
-  });
-}
-async function _getAdminBgBlob() {
+async function _adminDBGet(dbName, key) {
   try {
-    const db = await _openAdminBgDB();
+    const db = await _openAdminDB(dbName);
     return new Promise(res => {
-      const req = db.transaction('bg', 'readonly').objectStore('bg').get('img');
+      const req = db.transaction('data','readonly').objectStore('data').get(key);
       req.onsuccess = e => res(e.target.result || null);
       req.onerror = () => res(null);
     });
   } catch { return null; }
 }
-async function _delAdminBgBlob() {
-  const db = await _openAdminBgDB();
+async function _adminDBPut(dbName, key, blob) {
+  const db = await _openAdminDB(dbName);
+  return new Promise((res, rej) => {
+    const tx = db.transaction('data','readwrite');
+    tx.objectStore('data').put(blob, key);
+    tx.oncomplete = res; tx.onerror = rej;
+  });
+}
+async function _adminDBDel(dbName, key) {
+  const db = await _openAdminDB(dbName);
   return new Promise(res => {
-    const tx = db.transaction('bg', 'readwrite');
-    tx.objectStore('bg').delete('img');
+    const tx = db.transaction('data','readwrite');
+    tx.objectStore('data').delete(key);
     tx.oncomplete = res; tx.onerror = res;
   });
 }
 
-let _adminBgURL = null;
+const _adminBgURLs  = {}; // theme → image object URL
+const _adminVidURLs = {}; // theme → video object URL
+
+function _currentAdminTheme() {
+  return localStorage.getItem('lum_adminTheme') || 'default';
+}
 
 async function applyAdminBg() {
-  const blob = await _getAdminBgBlob();
+  const theme = _currentAdminTheme();
+  const blob  = await _adminDBGet('lum_adminbg2', theme);
   let el = document.getElementById('adminBgLayer');
-  if (!blob) { if (el) el.remove(); return; }
-  if (_adminBgURL) URL.revokeObjectURL(_adminBgURL);
-  _adminBgURL = URL.createObjectURL(blob);
+
+  if (!blob) {
+    if (el) { el.style.backgroundImage = 'none'; el.style.opacity = '0'; }
+    return;
+  }
+  if (!_adminBgURLs[theme]) _adminBgURLs[theme] = URL.createObjectURL(blob);
+
   if (!el) {
     el = document.createElement('div');
     el.id = 'adminBgLayer';
-    el.style.cssText = 'position:fixed;inset:0;z-index:0;pointer-events:none;transition:opacity 0.3s';
+    el.style.cssText = 'position:fixed;inset:0;z-index:0;pointer-events:none;transition:opacity 0.4s;background-size:cover;background-position:center';
     document.body.prepend(el);
   }
-  el.style.backgroundImage = `url(${_adminBgURL})`;
-  el.style.backgroundSize  = 'cover';
-  el.style.backgroundPosition = 'center';
+  el.style.backgroundImage = `url(${_adminBgURLs[theme]})`;
   el.style.opacity = document.body.hasAttribute('data-admin-mode') ? '1' : '0';
 }
 
 async function uploadAdminBg(file) {
   if (!file || !file.type.startsWith('image/')) { showToast('Selecciona una imagen válida', true); return; }
+  const theme = _currentAdminTheme();
   showToast('Guardando imagen…');
-  await _saveAdminBgBlob(file);
+  await _adminDBPut('lum_adminbg2', theme, file);
+  if (_adminBgURLs[theme]) { URL.revokeObjectURL(_adminBgURLs[theme]); delete _adminBgURLs[theme]; }
   await applyAdminBg();
   await renderAdminBgPicker();
-  showToast('Imagen de fondo del admin guardada ✓');
+  showToast('Imagen de fondo guardada ✓');
 }
 
 async function removeAdminBg() {
-  await _delAdminBgBlob();
-  if (_adminBgURL) { URL.revokeObjectURL(_adminBgURL); _adminBgURL = null; }
+  const theme = _currentAdminTheme();
+  await _adminDBDel('lum_adminbg2', theme);
+  if (_adminBgURLs[theme]) { URL.revokeObjectURL(_adminBgURLs[theme]); delete _adminBgURLs[theme]; }
   const el = document.getElementById('adminBgLayer');
-  if (el) el.remove();
+  if (el) el.style.opacity = '0';
   await renderAdminBgPicker();
   showToast('Imagen eliminada');
 }
@@ -1099,14 +1111,15 @@ async function removeAdminBg() {
 async function renderAdminBgPicker() {
   const wrap = document.getElementById('adminBgPickerWrap');
   if (!wrap) return;
-  const blob = await _getAdminBgBlob();
+  const theme = _currentAdminTheme();
+  const blob  = await _adminDBGet('lum_adminbg2', theme);
   if (blob) {
-    const url = _adminBgURL || URL.createObjectURL(blob);
+    if (!_adminBgURLs[theme]) _adminBgURLs[theme] = URL.createObjectURL(blob);
     wrap.innerHTML = `
       <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
-        <img src="${url}" style="height:64px;width:110px;object-fit:cover;border-radius:8px;border:2px solid var(--accent)">
+        <img src="${_adminBgURLs[theme]}" style="height:64px;width:110px;object-fit:cover;border-radius:8px;border:2px solid var(--accent)">
         <div>
-          <p style="font-size:0.8rem;margin-bottom:0.3rem">Imagen cargada ✓</p>
+          <p style="font-size:0.8rem;margin-bottom:0.3rem">Imagen de la plantilla "${theme}" ✓</p>
           <button class="btn-secondary btn-sm" onclick="document.getElementById('adminBgInput').click()">Cambiar</button>
           <button class="btn-danger btn-sm" style="margin-left:0.4rem" onclick="removeAdminBg()">Quitar</button>
         </div>
@@ -1116,7 +1129,79 @@ async function renderAdminBgPicker() {
       <button class="btn-secondary btn-sm" onclick="document.getElementById('adminBgInput').click()">
         🖼 Subir imagen de fondo
       </button>
-      <p style="font-size:0.74rem;color:var(--text3);margin-top:0.4rem">Se guarda en este navegador. Sin consumo de Firebase.</p>`;
+      <p style="font-size:0.74rem;color:var(--text3);margin-top:0.35rem">Solo se aplica a la plantilla <strong>${theme}</strong>. Sin Firebase.</p>`;
+  }
+}
+
+// ── VIDEOS DE ADMIN POR PLANTILLA (lluvia y matrix) ─────────────────
+const _VIDEO_THEMES = ['lluvia', 'matrix'];
+
+async function applyAdminThemeVideo() {
+  const theme = _currentAdminTheme();
+  const wrap  = document.getElementById('bgVideoWrap');
+  const video = document.getElementById('bgVideo');
+  const src   = document.getElementById('bgVideoSrc');
+  if (!wrap || !video || !src) return;
+
+  if (!_VIDEO_THEMES.includes(theme)) { wrap.classList.add('hidden'); video.pause(); return; }
+
+  const blob = await _adminDBGet('lum_adminvid2', theme);
+  if (!blob) { wrap.classList.add('hidden'); video.pause(); return; }
+
+  if (!_adminVidURLs[theme]) _adminVidURLs[theme] = URL.createObjectURL(blob);
+  wrap.classList.remove('hidden');
+  if (src.getAttribute('src') !== _adminVidURLs[theme]) {
+    src.setAttribute('src', _adminVidURLs[theme]);
+    video.load();
+  }
+  video.play().catch(() => {});
+}
+
+async function uploadAdminThemeVid(file) {
+  if (!file || !file.type.startsWith('video/')) { showToast('Selecciona un archivo de video válido', true); return; }
+  const theme = _currentAdminTheme();
+  showToast('Guardando video…');
+  await _adminDBPut('lum_adminvid2', theme, file);
+  if (_adminVidURLs[theme]) { URL.revokeObjectURL(_adminVidURLs[theme]); delete _adminVidURLs[theme]; }
+  await applyAdminThemeVideo();
+  await renderAdminVidPicker();
+  showToast('Video de fondo guardado ✓');
+}
+
+async function removeAdminThemeVid() {
+  const theme = _currentAdminTheme();
+  await _adminDBDel('lum_adminvid2', theme);
+  if (_adminVidURLs[theme]) { URL.revokeObjectURL(_adminVidURLs[theme]); delete _adminVidURLs[theme]; }
+  const wrap = document.getElementById('bgVideoWrap');
+  const video = document.getElementById('bgVideo');
+  if (wrap) wrap.classList.add('hidden');
+  if (video) video.pause();
+  await renderAdminVidPicker();
+  showToast('Video eliminado');
+}
+
+async function renderAdminVidPicker() {
+  const wrap = document.getElementById('adminVidPickerWrap');
+  if (!wrap) return;
+  const theme = _currentAdminTheme();
+  const blob  = await _adminDBGet('lum_adminvid2', theme);
+  if (blob) {
+    if (!_adminVidURLs[theme]) _adminVidURLs[theme] = URL.createObjectURL(blob);
+    wrap.innerHTML = `
+      <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+        <video src="${_adminVidURLs[theme]}" muted preload="metadata" style="height:64px;width:110px;object-fit:cover;border-radius:8px;border:2px solid var(--accent)"></video>
+        <div>
+          <p style="font-size:0.8rem;margin-bottom:0.3rem">Video de la plantilla "${theme}" ✓</p>
+          <button class="btn-secondary btn-sm" onclick="document.getElementById('adminVidInput').click()">Cambiar</button>
+          <button class="btn-danger btn-sm" style="margin-left:0.4rem" onclick="removeAdminThemeVid()">Quitar</button>
+        </div>
+      </div>`;
+  } else {
+    wrap.innerHTML = `
+      <button class="btn-secondary btn-sm" onclick="document.getElementById('adminVidInput').click()">
+        🎬 Subir video de fondo
+      </button>
+      <p style="font-size:0.74rem;color:var(--text3);margin-top:0.35rem">Solo se aplica a la plantilla <strong>${theme}</strong>. Sin Firebase.</p>`;
   }
 }
 
