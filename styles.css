@@ -1131,7 +1131,8 @@ input, select, textarea, button {
 .admin-user-info { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
 .admin-user-name { font-size: 0.88rem; font-weight: 600; color: var(--text); }
 .admin-user-store { font-size: 0.75rem; color: var(--text3); }
-.admin-last-seen { font-size: 0.70rem; color: var(--text3); opacity: 0.75; }
+.admin-last-seen { font-size: 0.72rem; color: var(--text2); font-weight: 500; }
+.admin-last-seen-when { font-size: 0.68rem; color: var(--text3); opacity: 0.80; }
 .admin-user-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
 
 /* ── Status dots ── */
@@ -3260,6 +3261,76 @@ html[data-fontweight="bold"] button { font-weight: 600; }
 @media (max-width: 400px) {
   .stats-grid { grid-template-columns: 1fr; }
   .palette-picker { grid-template-columns: 1fr 1fr; }
+}
+
+/* ═══════════════════════
+   MODAL DEUDA MANUAL
+═══════════════════════ */
+.md-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+  max-height: 150px;
+  overflow-y: auto;
+}
+.md-prod-card {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.38rem 0.7rem;
+  border-radius: 8px;
+  border: 1.5px solid var(--border);
+  background: var(--surface2);
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: border-color 0.15s, background 0.15s;
+}
+.md-prod-card:hover { border-color: var(--accent); background: var(--surface); }
+.md-prod-card.in-list { border-color: var(--accent2); }
+.md-prod-name { font-weight: 500; color: var(--text); }
+.md-prod-price { color: var(--text3); font-size: 0.74rem; }
+.md-in-list-badge { font-size: 0.65rem; color: var(--accent2); font-weight: 600; }
+
+.md-items-list { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.25rem; }
+.md-empty-items { font-size: 0.82rem; color: var(--text3); padding: 0.5rem 0; }
+
+.md-item-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.md-item-name { font-size: 0.85rem; color: var(--text); font-weight: 500; }
+.md-item-sub  { font-size: 0.95rem; color: var(--accent); font-weight: 600; }
+.md-remove-btn {
+  background: none;
+  border: none;
+  color: var(--text3);
+  cursor: pointer;
+  padding: 0.2rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+.md-remove-btn:hover { color: #e07070; }
+
+.md-totals-section {
+  border-top: 1px solid var(--border);
+  padding-top: 0.85rem;
+  margin-top: 0.5rem;
+}
+.md-total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.6rem;
+  font-size: 0.9rem;
+  color: var(--text2);
 }
 
 /* ═══════════════════════

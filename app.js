@@ -587,13 +587,23 @@ async function renderAdminPage() {
 
   function fmtLastSeen(username) {
     const ts = lastSeenMap[username];
-    if (!ts) return { label: 'Nunca conectado', dot: 'dot-offline' };
-    const diff = Date.now() - ts;
-    if (diff < 900000)   return { label: 'En línea ahora',          dot: 'dot-online' };
-    if (diff < 3600000)  return { label: `Hace ${Math.floor(diff/60000)} min`, dot: 'dot-recent' };
-    if (diff < 86400000) return { label: `Hace ${Math.floor(diff/3600000)} h`, dot: 'dot-recent' };
-    if (diff < 604800000)return { label: `Hace ${Math.floor(diff/86400000)} días`, dot: 'dot-idle' };
-    return { label: `Hace más de una semana`, dot: 'dot-offline' };
+    if (!ts) return { label: 'No conectado', when: 'Sin registros de acceso', dot: 'dot-offline' };
+
+    const diff   = Date.now() - ts;
+    const mins   = Math.floor(diff / 60000);
+    const hrs    = Math.floor(diff / 3600000);
+    const days   = Math.floor(diff / 86400000);
+    const weeks  = Math.floor(diff / 604800000);
+    const months = Math.floor(diff / 2592000000);
+
+    if (diff < 60000)       return { label: 'En línea',            when: 'Ahora mismo',                          dot: 'dot-online'  };
+    if (diff < 3600000)     return { label: 'En línea',            when: `Hace ${mins} minuto${mins!==1?'s':''}`, dot: 'dot-online'  };
+    if (diff < 86400000)    return { label: 'Conectado hoy',       when: `Hace ${hrs} hora${hrs!==1?'s':''}`,    dot: 'dot-recent'  };
+    if (diff < 172800000)   return { label: 'Conectado ayer',      when: `Hace ${hrs} horas`,                    dot: 'dot-recent'  };
+    if (diff < 604800000)   return { label: 'Esta semana',         when: `Hace ${days} día${days!==1?'s':''}`,   dot: 'dot-idle'    };
+    if (diff < 2592000000)  return { label: 'Inactivo',            when: `Hace ${weeks} semana${weeks!==1?'s':''}`, dot: 'dot-idle' };
+    if (diff < 31536000000) return { label: 'No conectado',        when: `Hace ${months} mes${months!==1?'es':''}`, dot: 'dot-offline'};
+    return                         { label: 'No conectado',        when: 'Hace más de un año',                   dot: 'dot-offline' };
   }
 
   const usersHtml = users.length === 0
@@ -608,7 +618,8 @@ async function renderAdminPage() {
             <span class="admin-user-name">${u.username}</span>
           </div>
           <span class="admin-user-store">${u.storeName || '—'}</span>
-          <span class="admin-last-seen">🕐 ${seen.label}</span>
+          <span class="admin-last-seen">${seen.label}</span>
+          <span class="admin-last-seen-when">🕐 ${seen.when}</span>
         </div>
         <div class="admin-user-actions">
           <button class="btn-secondary btn-sm" onclick="openChangePassword('${u.id}','${u.username}')">Contraseña</button>
@@ -1071,31 +1082,58 @@ function applyCustomAppearance() {
   const s = document.getElementById('_custom_glass_style') ||
     (() => { const el = document.createElement('style'); el.id = '_custom_glass_style'; document.head.appendChild(el); return el; })();
 
-  // Solo aplicar el override de vidrio en paletas que soportan ese efecto.
-  // Para paletas sólidas (negra, crema, etc.) limpiar siempre para no romper nada.
-  if (isGlass && (c.glassAlpha !== undefined || c.panelColor)) {
-    const a   = c.glassAlpha !== undefined ? +c.glassAlpha : 0.5;
-    const a2  = Math.min(a + 0.18, 1);
-    const hex = c.panelColor || '#ffffff';
-    const r   = parseInt(hex.slice(1,3), 16);
-    const g   = parseInt(hex.slice(3,5), 16);
-    const b   = parseInt(hex.slice(5,7), 16);
-    const rgb = `${r},${g},${b}`;
-    // html[data-palette] tiene especificidad [0,1,1,1] > [data-palette='X'] [0,1,1,0]
-    s.textContent = `
-      html[data-palette] .sidebar,
-      html[data-palette] .topbar,
-      html[data-palette] .table-card,
-      html[data-palette] .settings-card,
-      html[data-palette] .stat-card,
-      html[data-palette] .chart-card,
-      html[data-palette] .login-card,
-      html[data-palette] .client-row,
-      html[data-palette] .product-card { background: rgba(${rgb},${a}) !important; }
-      html[data-palette] .modal        { background: rgba(${rgb},${a2}) !important; }
-    `;
+  // "Transparencia" (0-95) tiene prioridad sobre "Solidez" si está activa
+  // transparencia 0 = sólido (alpha=1), transparencia 95 = casi invisible (alpha≈0.05)
+  let finalAlpha;
+  if (c.uiTransparency !== undefined && +c.uiTransparency > 0) {
+    finalAlpha = 1 - (+c.uiTransparency / 100);
+  } else if (c.glassAlpha !== undefined) {
+    finalAlpha = +c.glassAlpha;
+  }
+
+  const hasCustom = finalAlpha !== undefined || c.panelColor;
+
+  if (hasCustom) {
+    // Aplicar a TODAS las paletas cuando hay transparencia activa,
+    // solo a paletas de vidrio cuando es solo solidez.
+    const applyToAll = c.uiTransparency !== undefined && +c.uiTransparency > 0;
+    const shouldApply = applyToAll || isGlass;
+
+    if (shouldApply) {
+      const a   = finalAlpha !== undefined ? finalAlpha : 0.5;
+      const a2  = Math.min(a + 0.18, 1);
+      const hex = c.panelColor || (isGlass ? '#ffffff' : null);
+
+      // Para paletas sólidas sin color personalizado: extraer color de superficie
+      // usando el propio CSS (simplificado: usar el valor que tenga sentido)
+      let rgb;
+      if (hex) {
+        const r = parseInt(hex.slice(1,3), 16);
+        const g = parseInt(hex.slice(3,5), 16);
+        const b = parseInt(hex.slice(5,7), 16);
+        rgb = `${r},${g},${b}`;
+      } else {
+        // Para paletas sólidas, usar el color de superficie como base aproximada
+        rgb = '20,20,20';
+      }
+
+      s.textContent = `
+        html[data-palette] .sidebar,
+        html[data-palette] .topbar,
+        html[data-palette] .table-card,
+        html[data-palette] .settings-card,
+        html[data-palette] .stat-card,
+        html[data-palette] .chart-card,
+        html[data-palette] .login-card,
+        html[data-palette] .client-row,
+        html[data-palette] .product-card { background: rgba(${rgb},${a}) !important; }
+        html[data-palette] .modal        { background: rgba(${rgb},${a2}) !important; }
+      `;
+    } else {
+      s.textContent = '';
+    }
   } else {
-    s.textContent = ''; // Limpiar — no afectar paletas sólidas
+    s.textContent = '';
   }
 }
 
@@ -1122,6 +1160,19 @@ function setCustomBg(color) {
   cfg.custom.bg = color;
   DB.set('config', cfg);
   applyCustomAppearance();
+}
+
+function setPanelTransparency(pct) {
+  const val = parseInt(pct);
+  const cfg = getConfig();
+  cfg.custom = cfg.custom || {};
+  cfg.custom.uiTransparency = val;
+  DB.set('config', cfg);
+  applyCustomAppearance();
+  const lbl = document.getElementById('transparencyVal');
+  if (lbl) lbl.textContent = val + '%';
+  const sl = document.getElementById('transparencySlider');
+  if (sl) sl.value = val;
 }
 
 function setCustomPanelColor(hex) {
@@ -1202,8 +1253,23 @@ async function adminSyncUsers() {
     renderAdminPage();
     return;
   }
-  const reg = await _pullRegistry();
-  _adminAccounts = reg?.accounts || DB.get('users');
+  try {
+    const reg = await _pullRegistry();
+    const fromRegistry = Array.isArray(reg?.accounts) ? reg.accounts : [];
+    const fromLocal    = DB.get('users') || [];
+
+    // Fusionar: registro global + usuarios locales del admin (sin duplicar)
+    const merged = [...fromRegistry];
+    fromLocal.forEach(u => {
+      if (!merged.find(a => a.username === u.username)) {
+        merged.push({ id: u.id, username: u.username, storeName: u.storeName || '' });
+      }
+    });
+    _adminAccounts = merged;
+  } catch(e) {
+    console.warn('[adminSyncUsers]', e.message);
+    _adminAccounts = DB.get('users') || [];
+  }
   renderAdminPage();
 }
 
@@ -1230,17 +1296,17 @@ async function adminImportUser() {
       if (msgEl) { msgEl.style.color = '#e07070'; msgEl.textContent = 'Documento encontrado pero no tiene usuarios.'; }
       return;
     }
-    // Add to global registry (user keeps their own Firestore doc)
-    const regEntry = { id: targetUser.id, username: targetUser.username, storeName: targetUser.storeName || '' };
-    // Forzar sync antes de verificar para evitar falsos "ya existe"
+    // Forzar sync del registro antes de verificar duplicados
     const freshReg = await _pullRegistry();
     _adminAccounts = freshReg?.accounts || DB.get('users');
+
+    const regEntry = { id: targetUser.id, username: targetUser.username, storeName: targetUser.storeName || '' };
     if (_adminAccounts.find(a => a.username.toLowerCase() === regEntry.username.toLowerCase())) {
       if (msgEl) { msgEl.style.color = '#e0a870'; msgEl.textContent = `"${regEntry.username}" ya está en cuentas activas. Pulsa ↻ Actualizar para verla.`; }
       renderAdminPage();
       return;
     }
-    _adminAccounts = [...existing, regEntry];
+    _adminAccounts = [..._adminAccounts, regEntry];
     await _pushRegistry({ accounts: _adminAccounts });
     document.getElementById('importUsername').value = '';
     if (msgEl) { msgEl.style.color = 'var(--accent2)'; msgEl.textContent = `"${targetUser.username}" importado correctamente ✓`; }
@@ -1415,6 +1481,11 @@ function loadSettingsPage() {
   if (el('customTextPicker'))       el('customTextPicker').value       = c.text       || '#f2f2f2';
   if (el('customBgPicker'))         el('customBgPicker').value         = c.bg         || '#080808';
   if (el('customPanelColorPicker')) el('customPanelColorPicker').value = c.panelColor || '#ffffff';
+  if (el('transparencySlider')) {
+    const t = c.uiTransparency !== undefined ? c.uiTransparency : 0;
+    el('transparencySlider').value = t;
+    if (el('transparencyVal')) el('transparencyVal').textContent = t + '%';
+  }
   if (el('glassAlphaSlider')) {
     const a = c.glassAlpha !== undefined ? c.glassAlpha : 0.5;
     el('glassAlphaSlider').value = a;
@@ -1570,13 +1641,16 @@ function renderProducts() {
   const grid = document.getElementById('productsGrid');
   if (!grid) return;
 
-  const search = (document.getElementById('productSearch')?.value || '').toLowerCase();
+  const search = normalizeStr(document.getElementById('productSearch')?.value || '');
   const cat = document.getElementById('productCatFilter')?.value || '';
   const currency = getCurrency();
   const lowThr = getLowStockThreshold();
 
   let products = getProducts();
-  if (search) products = products.filter(p => p.name.toLowerCase().includes(search) || (p.description || '').toLowerCase().includes(search));
+  if (search) products = products.filter(p =>
+    normalizeStr(p.name).includes(search) ||
+    normalizeStr(p.description || '').includes(search) ||
+    normalizeStr(p.category || '').includes(search));
   if (cat) products = products.filter(p => p.category === cat);
 
   if (!products.length) {
@@ -1733,14 +1807,17 @@ function renderClients() {
   const grid = document.getElementById('clientsGrid');
   if (!grid) return;
 
-  const search = (document.getElementById('clientSearch')?.value || '').toLowerCase();
+  const search = normalizeStr(document.getElementById('clientSearch')?.value || '');
   const currency = getCurrency();
   const sales = DB.get('sales');
   const OVERDUE_DAYS = 42;
   const now = Date.now();
 
   let clients = getClients();
-  if (search) clients = clients.filter(c => c.name.toLowerCase().includes(search) || (c.phone || '').includes(search));
+  if (search) clients = clients.filter(c =>
+    normalizeStr(c.name).includes(search) ||
+    normalizeStr(c.phone || '').includes(search) ||
+    normalizeStr(c.email || '').includes(search));
 
   // Enrich each client with debt and overdue status
   clients = clients.map(c => {
@@ -1860,8 +1937,12 @@ function openClientDetail(clientId) {
           <span class="cd-remaining">Pendiente: <b>${currency}${fmtN(remaining)}</b></span>
         </div>
       </div>
-      <button class="btn-primary" style="width:100%;margin-top:0.75rem;font-size:0.85rem"
-              onclick="openPaymentModal('${s.id}','${clientId}')">Registrar Pago →</button>
+      <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
+        <button class="btn-primary" style="flex:1;font-size:0.85rem"
+                onclick="openPaymentModal('${s.id}','${clientId}')">Registrar Pago →</button>
+        <button class="btn-secondary" style="font-size:0.82rem;padding:0.45rem 0.8rem"
+                onclick="openManualDebtModal('${clientId}','${s.id}')" title="Editar esta deuda">✎</button>
+      </div>
     </div>`;
   }
 
@@ -1870,12 +1951,15 @@ function openClientDetail(clientId) {
     : `<p style="color:var(--accent2);font-size:0.85rem;padding:0.5rem 0">Sin deudas pendientes ✓</p>`;
 
   const deudasHtml = `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:0.75rem">
+      <button class="btn-primary btn-sm" onclick="openManualDebtModal('${clientId}')">+ Agregar deuda</button>
+    </div>
     ${pendingSales.length ? `
       <div class="cd-debt-total-banner">
         <span>Deuda total del cliente</span>
         <strong>${currency}${fmtN(totalDebt)}</strong>
       </div>
-      <p style="font-size:0.78rem;color:var(--text3);margin-bottom:0.75rem">Toca una venta para registrar un pago o abono parcial</p>
+      <p style="font-size:0.78rem;color:var(--text3);margin-bottom:0.75rem">Toca "Registrar Pago" para abonar o saldar.</p>
     ` : ''}
     <div class="cd-fiado-list">${pendingHtml}</div>`;
 
@@ -1931,6 +2015,260 @@ function openClientDetail(clientId) {
     <div id="cd-panel-historial" class="cd-panel hidden">${historialHtml}</div>`;
 
   openModal('clientDetailModal');
+}
+
+// ── DEUDA MANUAL — multi-producto ───────────────────────────────────
+let _mdClientId = null;
+let _mdSaleId   = null;  // null = nueva deuda, string = editar existente
+let _mdItems    = [];    // [{ productId, productName, qty, unitPrice, custom }]
+
+function openManualDebtModal(clientId, saleId) {
+  _mdClientId = clientId;
+  _mdSaleId   = saleId || null;
+  _mdItems    = [];
+
+  const todayVal = todayStr();
+
+  if (saleId) {
+    // EDITAR: cargar ítems de la venta existente
+    const sale = DB.get('sales').find(s => s.id === saleId);
+    if (!sale) return;
+    document.getElementById('manualDebtTitle').textContent = 'Editar deuda';
+    getSaleItems(sale).forEach(item => {
+      _mdItems.push({
+        productId:   item.productId || null,
+        productName: item.productName || '',
+        qty:         item.qty || 1,
+        unitPrice:   item.unitPrice || (item.total / (item.qty || 1)),
+        custom:      !item.productId,
+      });
+    });
+    document.getElementById('mdPaid').value  = Math.round(getSaleAmountPaid(sale));
+    document.getElementById('mdDate').value  = sale.date || todayVal;
+    document.getElementById('mdNote').value  = sale.note || '';
+  } else {
+    document.getElementById('manualDebtTitle').textContent = 'Agregar deuda';
+    document.getElementById('mdPaid').value  = 0;
+    document.getElementById('mdDate').value  = todayVal;
+    document.getElementById('mdNote').value  = '';
+  }
+
+  document.getElementById('mdSearch').value    = '';
+  document.getElementById('mdProductResults').innerHTML = '';
+  document.getElementById('mdError').textContent = '';
+
+  renderMdItemsList();
+  updateMdTotal();
+  searchMdProducts(); // mostrar todos los productos al abrir
+
+  closeModal('clientDetailModal');
+  openModal('manualDebtModal');
+}
+
+function searchMdProducts() {
+  const q = normalizeStr(document.getElementById('mdSearch')?.value || '');
+  const el = document.getElementById('mdProductResults');
+  if (!el) return;
+
+  const currency = getCurrency();
+  let prods = getProducts();
+  if (q) prods = prods.filter(p =>
+    normalizeStr(p.name).includes(q) ||
+    normalizeStr(p.category || '').includes(q));
+
+  if (!prods.length && q) {
+    el.innerHTML = `<p style="font-size:0.82rem;color:var(--text3);padding:0.4rem 0">
+      Sin resultados para "${document.getElementById('mdSearch').value}" — usa "+ Producto no listado".</p>`;
+    return;
+  }
+
+  const shown = q ? prods : prods.slice(0, 16);
+  el.innerHTML = shown.map(p => {
+    const inList = _mdItems.find(i => i.productId === p.id);
+    return `<div class="md-prod-card ${inList ? 'in-list' : ''}" onclick="addMdProduct('${p.id}','${p.name.replace(/'/g,"\\'").replace(/"/g,'&quot;')}',${p.price||0})">
+      <span class="md-prod-name">${p.name}</span>
+      <span class="md-prod-price">${currency}${fmtN(p.price||0)}</span>
+      ${inList ? '<span class="md-in-list-badge">✓ añadido</span>' : ''}
+    </div>`;
+  }).join('');
+}
+
+function addMdProduct(productId, productName, price) {
+  const existing = _mdItems.findIndex(i => i.productId === productId);
+  if (existing !== -1) {
+    // Incrementar cantidad si ya está
+    _mdItems[existing].qty++;
+  } else {
+    _mdItems.push({ productId, productName, qty: 1, unitPrice: price || 0, custom: false });
+  }
+  renderMdItemsList();
+  updateMdTotal();
+  searchMdProducts(); // actualizar badge "✓ añadido"
+}
+
+function addMdCustomItem() {
+  _mdItems.push({ productId: null, productName: '', qty: 1, unitPrice: 0, custom: true });
+  renderMdItemsList();
+  updateMdTotal();
+  // Focus al input de nombre del nuevo item
+  const inputs = document.querySelectorAll('.md-custom-name');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+}
+
+function removeMdItem(idx) {
+  _mdItems.splice(idx, 1);
+  renderMdItemsList();
+  updateMdTotal();
+  searchMdProducts();
+}
+
+function updateMdItemField(idx, field, value) {
+  _mdItems[idx][field] = field === 'qty' || field === 'unitPrice' ? (parseFloat(value) || 0) : value;
+  updateMdTotal();
+  // Re-render solo la celda de subtotal
+  const cells = document.querySelectorAll('.md-item-sub');
+  if (cells[idx]) {
+    const item = _mdItems[idx];
+    cells[idx].textContent = getCurrency() + fmtN(Math.round((item.qty || 1) * (item.unitPrice || 0)));
+  }
+}
+
+function renderMdItemsList() {
+  const el = document.getElementById('mdItemsList');
+  if (!el) return;
+  const currency = getCurrency();
+
+  if (!_mdItems.length) {
+    el.innerHTML = `<p class="md-empty-items">Busca y añade productos arriba, o usa "+ Producto no listado".</p>`;
+    return;
+  }
+
+  el.innerHTML = _mdItems.map((item, idx) => `
+    <div class="md-item-row">
+      ${item.custom
+        ? `<input class="md-custom-name" type="text" placeholder="Nombre del producto" value="${item.productName}"
+                  style="flex:1" oninput="updateMdItemField(${idx},'productName',this.value)" />`
+        : `<span class="md-item-name" style="flex:1">${item.productName}</span>`}
+      <label style="font-size:0.72rem;color:var(--text3);display:flex;flex-direction:column;align-items:center;gap:2px">
+        Cant.
+        <input type="number" min="1" value="${item.qty}" style="width:52px;text-align:center"
+               oninput="updateMdItemField(${idx},'qty',this.value)" />
+      </label>
+      <label style="font-size:0.72rem;color:var(--text3);display:flex;flex-direction:column;align-items:center;gap:2px">
+        Precio
+        <input type="number" min="0" value="${item.unitPrice}" style="width:80px"
+               oninput="updateMdItemField(${idx},'unitPrice',this.value)" />
+      </label>
+      <span class="md-item-sub" style="min-width:72px;text-align:right;font-family:'Cormorant Garamond',serif;font-size:1rem">
+        ${currency}${fmtN(Math.round((item.qty||1)*(item.unitPrice||0)))}
+      </span>
+      <button class="md-remove-btn" onclick="removeMdItem(${idx})" title="Quitar">✕</button>
+    </div>`).join('');
+}
+
+function updateMdTotal() {
+  const total = _mdItems.reduce((a, i) => a + Math.round((i.qty||1)*(i.unitPrice||0)), 0);
+  const el = document.getElementById('mdTotalDisplay');
+  if (el) el.textContent = getCurrency() + fmtN(total);
+}
+
+function saveManualDebt() {
+  const errEl = document.getElementById('mdError');
+  errEl.textContent = '';
+
+  if (!_mdItems.length) { errEl.textContent = 'Agrega al menos un producto.'; return; }
+  if (_mdItems.some(i => !i.productName.trim())) { errEl.textContent = 'Todos los productos deben tener nombre.'; return; }
+  if (_mdItems.some(i => (i.unitPrice||0) <= 0 && (i.qty||1) > 0)) {
+    errEl.textContent = 'Todos los productos deben tener precio mayor a 0.'; return;
+  }
+
+  const total = _mdItems.reduce((a, i) => a + Math.round((i.qty||1)*(i.unitPrice||0)), 0);
+  if (total <= 0) { errEl.textContent = 'El total debe ser mayor a 0.'; return; }
+
+  const paid  = parseFloat(document.getElementById('mdPaid').value)  || 0;
+  const date  = document.getElementById('mdDate').value || todayStr();
+  const note  = document.getElementById('mdNote').value.trim();
+
+  if (paid > total) { errEl.textContent = 'El pago previo no puede superar el total.'; return; }
+
+  const client = getClients().find(c => c.id === _mdClientId);
+  if (!client)  { errEl.textContent = 'Cliente no encontrado.'; return; }
+
+  const items = _mdItems.map(i => ({
+    productId:   i.productId || null,
+    productName: i.productName.trim(),
+    qty:         i.qty || 1,
+    unitPrice:   i.unitPrice || 0,
+    total:       Math.round((i.qty||1) * (i.unitPrice||0)),
+    amountPaid:  0,
+  }));
+  // Distribuir pago inicial proporcionalmente
+  if (paid > 0) {
+    items.forEach(item => {
+      item.amountPaid = Math.min(item.total, Math.round((item.total / total) * paid));
+    });
+  }
+
+  const payments = paid > 0
+    ? [{ id: uid(), amount: paid, date, note: note || 'Abono inicial', by: currentUser?.username || '', itemAmounts: {} }]
+    : [];
+
+  const saleLabel = items.length === 1 ? items[0].productName : `${items.length} productos`;
+  const sales = DB.get('sales');
+
+  if (_mdSaleId) {
+    // ── EDITAR ──────────────────────────────────────────────────────
+    const idx = sales.findIndex(s => s.id === _mdSaleId);
+    if (idx === -1) { errEl.textContent = 'Venta no encontrada.'; return; }
+    const sale = sales[idx];
+    sale.total       = total;
+    sale.items       = items;
+    sale.productName = saleLabel;
+    sale.productId   = items[0]?.productId || null;
+    sale.qty         = items.reduce((a, i) => a + i.qty, 0);
+    sale.date        = date;
+    sale.note        = note;
+    sale.isManualDebt = true;
+    // Añadir diferencia de pago si el abono previo aumentó
+    const realPaid = getSaleAmountPaid(sale);
+    if (paid > realPaid) {
+      if (!sale.payments) sale.payments = [];
+      sale.payments.push({ id: uid(), amount: paid - realPaid, date, note: note || 'Abono inicial', by: currentUser?.username || '', itemAmounts: {} });
+    }
+    sale.amountPaid = getSaleAmountPaid(sale);
+    sale.paid = sale.amountPaid >= sale.total - 0.001;
+    if (sale.paid) sale.amountPaid = sale.total;
+    sales[idx] = sale;
+    DB.set('sales', sales);
+    showToast('Deuda actualizada ✓');
+  } else {
+    // ── NUEVA ───────────────────────────────────────────────────────
+    const newSale = {
+      id: uid(),
+      clientId:    _mdClientId,
+      clientName:  client.name,
+      productId:   items[0]?.productId || null,
+      productName: saleLabel,
+      qty:         items.reduce((a, i) => a + i.qty, 0),
+      unitPrice:   items[0]?.unitPrice || 0,
+      total,
+      amountPaid:  paid,
+      paid:        paid >= total,
+      date,
+      note,
+      payments,
+      isManualDebt: true,
+      items,
+    };
+    if (newSale.paid) newSale.amountPaid = total;
+    sales.push(newSale);
+    DB.set('sales', sales);
+    logAction('clientes', 'Deuda registrada', `${client.name} — ${saleLabel} — ${getCurrency()}${fmtN(total)}`);
+    showToast('Deuda registrada ✓');
+  }
+
+  closeModal('manualDebtModal');
+  openClientDetail(_mdClientId);
 }
 
 function switchClientTab(tab) {
@@ -2359,13 +2697,16 @@ function populateSaleSelects() {
 }
 
 function searchSaleProducts() {
-  const q = (document.getElementById('saleProductSearch')?.value || '').toLowerCase().trim();
+  const q = normalizeStr(document.getElementById('saleProductSearch')?.value || '');
   const resultsEl = document.getElementById('saleProductResults');
   if (!resultsEl) return;
 
   const currency = getCurrency();
   let products = getProducts().filter(p => p.stock > 0);
-  if (q) products = products.filter(p => p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q));
+  if (q) products = products.filter(p =>
+    normalizeStr(p.name).includes(q) ||
+    normalizeStr(p.category || '').includes(q) ||
+    normalizeStr(p.description || '').includes(q));
 
   if (!products.length) {
     resultsEl.innerHTML = `<p class="spr-empty">Sin productos${q ? ' para "' + q + '"' : ' disponibles'}.</p>`;
@@ -3278,6 +3619,12 @@ function showToast(msg, isError = false) {
 function uid() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 function now() { return new Date().toISOString(); }
 function todayStr() { return new Date().toISOString().slice(0, 10); }
+
+// Normaliza texto quitando acentos/tildes para búsquedas tolerantes
+// normalizeStr('café') === 'cafe', normalizeStr('niño') === 'nino'
+function normalizeStr(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
 
 function last7Days() {
   const days = [];

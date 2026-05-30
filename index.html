@@ -487,6 +487,18 @@
           </div>
           <div class="adv-row" style="flex-direction:column;align-items:flex-start;gap:0.3rem">
             <label style="width:100%;display:flex;justify-content:space-between">
+              Transparencia de paneles
+              <span id="transparencyVal" style="font-weight:600">0%</span>
+            </label>
+            <input type="range" id="transparencySlider" min="0" max="95" step="1" value="0"
+                   style="width:100%" oninput="setPanelTransparency(this.value)" />
+            <small style="color:var(--text3)">
+              0% = sólido · 50% = semitransparente · 95% = casi invisible (fondo visible)
+            </small>
+          </div>
+
+          <div class="adv-row" style="flex-direction:column;align-items:flex-start;gap:0.3rem">
+            <label style="width:100%;display:flex;justify-content:space-between">
               Solidez de paneles
               <span>
                 <span id="glassAlphaVal" style="font-weight:600">50%</span>
@@ -662,6 +674,61 @@
     <div class="modal-footer">
       <button class="btn-secondary" onclick="closeModal('clientModal')">Cancelar</button>
       <button class="btn-primary" onclick="saveClient()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MANUAL DEBT MODAL -->
+<div id="manualDebtModal" class="modal-overlay hidden" onclick="closeModalOutside(event,'manualDebtModal')">
+  <div class="modal modal-wide">
+    <div class="modal-header">
+      <h2 id="manualDebtTitle">Agregar deuda</h2>
+      <button onclick="closeModal('manualDebtModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- Búsqueda de productos (igual que en ventas) -->
+      <div class="input-group" style="margin-bottom:0.5rem">
+        <label>Buscar y agregar producto</label>
+        <input type="text" id="mdSearch" placeholder="Escribe nombre o categoría…"
+               oninput="searchMdProducts()" autocomplete="off" />
+      </div>
+      <div id="mdProductResults" class="md-results"></div>
+
+      <!-- Lista de productos añadidos -->
+      <div id="mdItemsList" class="md-items-list"></div>
+
+      <!-- Botón para añadir producto sin inventario -->
+      <button class="btn-secondary btn-sm" style="margin:0.4rem 0 1rem"
+              onclick="addMdCustomItem()">+ Producto no listado (texto libre)</button>
+
+      <!-- Totales y datos de la deuda -->
+      <div class="md-totals-section">
+        <div class="md-total-row">
+          <span>Total de la deuda</span>
+          <strong id="mdTotalDisplay" style="font-size:1.15rem;font-family:'Cormorant Garamond',serif">
+            ${getCurrency()}0
+          </strong>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-top:0.75rem">
+          <div class="input-group">
+            <label>Ya pagado (abono previo)</label>
+            <input type="number" id="mdPaid" min="0" value="0" placeholder="0" />
+          </div>
+          <div class="input-group">
+            <label>Fecha de la deuda</label>
+            <input type="date" id="mdDate" />
+          </div>
+        </div>
+        <div class="input-group">
+          <label>Nota (opcional)</label>
+          <input type="text" id="mdNote" placeholder="Ej: Deuda pendiente desde enero…" />
+        </div>
+      </div>
+      <p id="mdError" style="color:#e07070;font-size:0.82rem;min-height:1em;margin-top:0.5rem"></p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal('manualDebtModal')">Cancelar</button>
+      <button class="btn-primary" onclick="saveManualDebt()">Guardar deuda</button>
     </div>
   </div>
 </div>
