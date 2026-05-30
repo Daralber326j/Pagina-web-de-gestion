@@ -28,6 +28,7 @@ let productImageB64 = null;
 let saleCart = [];
 
 let _logFilter = '';
+let _presenceInterval = null;
 
 let salesChartInst = null;
 let topProductsChartInst = null;
@@ -352,6 +353,16 @@ async function _updateLastSeen(username) {
   }
 }
 
+function _startPresenceHeartbeat(username) {
+  _stopPresenceHeartbeat();
+  // Actualiza lastSeen cada 2 minutos para mantener el punto verde activo
+  _presenceInterval = setInterval(() => _updateLastSeen(username), 120000);
+}
+
+function _stopPresenceHeartbeat() {
+  if (_presenceInterval) { clearInterval(_presenceInterval); _presenceInterval = null; }
+}
+
 let _adminAccounts = null; // cache for admin panel account list
 
 async function checkAutoLogin() {
@@ -455,6 +466,7 @@ async function loginSuccess(user) {
     loadSettingsPage();
     refreshNavLabels();
     _updateLastSeen(user.username);
+    _startPresenceHeartbeat(user.username);
     // Pequeño retraso para que la app termine de cargar antes de mostrar el anuncio
     setTimeout(() => _checkAndShowAnnouncement(), 1200);
   } else {
@@ -544,6 +556,7 @@ async function handleRegister() {
 }
 
 function logout() {
+  _stopPresenceHeartbeat();
   if (typeof CloudSync !== 'undefined') CloudSync.clearUser();
   localStorage.removeItem('lum_session');
   localStorage.removeItem('lum_pal');
@@ -614,14 +627,14 @@ async function renderAdminPage() {
     const weeks  = Math.floor(diff / 604800000);
     const months = Math.floor(diff / 2592000000);
 
-    if (diff < 60000)       return { label: 'En línea',            when: 'Ahora mismo',                          dot: 'dot-online'  };
-    if (diff < 3600000)     return { label: 'En línea',            when: `Hace ${mins} minuto${mins!==1?'s':''}`, dot: 'dot-online'  };
-    if (diff < 86400000)    return { label: 'Conectado hoy',       when: `Hace ${hrs} hora${hrs!==1?'s':''}`,    dot: 'dot-recent'  };
-    if (diff < 172800000)   return { label: 'Conectado ayer',      when: `Hace ${hrs} horas`,                    dot: 'dot-recent'  };
-    if (diff < 604800000)   return { label: 'Esta semana',         when: `Hace ${days} día${days!==1?'s':''}`,   dot: 'dot-idle'    };
-    if (diff < 2592000000)  return { label: 'Inactivo',            when: `Hace ${weeks} semana${weeks!==1?'s':''}`, dot: 'dot-idle' };
-    if (diff < 31536000000) return { label: 'No conectado',        when: `Hace ${months} mes${months!==1?'es':''}`, dot: 'dot-offline'};
-    return                         { label: 'No conectado',        when: 'Hace más de un año',                   dot: 'dot-offline' };
+    if (diff < 180000)      return { label: 'En línea',            when: 'Ahora mismo',                          dot: 'dot-online'  };
+    if (diff < 900000)      return { label: 'Desconectado',        when: `Hace ${mins} minuto${mins!==1?'s':''}`, dot: 'dot-recent'  };
+    if (diff < 86400000)    return { label: 'Desconectado',        when: `Hace ${hrs} hora${hrs!==1?'s':''}`,    dot: 'dot-idle'    };
+    if (diff < 172800000)   return { label: 'Desconectado',        when: 'Ayer',                                 dot: 'dot-idle'    };
+    if (diff < 604800000)   return { label: 'Inactivo',            when: `Hace ${days} día${days!==1?'s':''}`,   dot: 'dot-offline' };
+    if (diff < 2592000000)  return { label: 'Inactivo',            when: `Hace ${weeks} semana${weeks!==1?'s':''}`, dot: 'dot-offline' };
+    if (diff < 31536000000) return { label: 'Sin actividad',       when: `Hace ${months} mes${months!==1?'es':''}`, dot: 'dot-offline'};
+    return                         { label: 'Sin actividad',       when: 'Hace más de un año',                   dot: 'dot-offline' };
   }
 
   const usersHtml = users.length === 0
@@ -945,9 +958,9 @@ function setAdminTheme(theme) {
     setPalette(restorePal);
   }
 
-  // Limpiar imagen inmediatamente para que no quede la de la plantilla anterior
-  const el = document.getElementById('adminBgLayer');
-  if (el) { el.style.backgroundImage = 'none'; el.style.opacity = '0'; }
+  // Limpiar imagen de la plantilla anterior antes de cargar la nueva
+  document.body.style.removeProperty('background-image');
+  document.body.classList.remove('has-admin-bg');
 
   applyAdminBg();   // carga imagen de la NUEVA plantilla
   applyVideoBg();   // carga video de la NUEVA plantilla
@@ -1077,19 +1090,27 @@ function _currentAdminTheme() {
   return localStorage.getItem('lum_adminTheme') || 'default';
 }
 
-// applyAdminBg usa body::before con variable CSS --admin-bg-img
-// Esto garantiza que la imagen aparece detrás de todo el contenido del admin
-// sin conflictos de z-index ni fondos sólidos que la tapen.
 async function applyAdminBg() {
   const theme = _currentAdminTheme();
   const blob  = await _adminDBGet('lum_adminbg2', theme);
 
   if (!blob) {
     document.documentElement.style.removeProperty('--admin-bg-img');
+    document.body.style.removeProperty('background-image');
+    document.body.style.removeProperty('background-size');
+    document.body.style.removeProperty('background-position');
+    document.body.style.removeProperty('background-attachment');
+    document.body.classList.remove('has-admin-bg');
     return;
   }
   if (!_adminBgURLs[theme]) _adminBgURLs[theme] = URL.createObjectURL(blob);
-  document.documentElement.style.setProperty('--admin-bg-img', `url("${_adminBgURLs[theme]}")`);
+  const imgUrl = `url("${_adminBgURLs[theme]}")`;
+  document.documentElement.style.setProperty('--admin-bg-img', imgUrl);
+  document.body.style.backgroundImage = imgUrl;
+  document.body.style.backgroundSize = 'cover';
+  document.body.style.backgroundPosition = 'center';
+  document.body.style.backgroundAttachment = 'fixed';
+  document.body.classList.add('has-admin-bg');
 }
 
 async function uploadAdminBg(file) {
@@ -1108,6 +1129,11 @@ async function removeAdminBg() {
   await _adminDBDel('lum_adminbg2', theme);
   if (_adminBgURLs[theme]) { URL.revokeObjectURL(_adminBgURLs[theme]); delete _adminBgURLs[theme]; }
   document.documentElement.style.removeProperty('--admin-bg-img');
+  document.body.style.removeProperty('background-image');
+  document.body.style.removeProperty('background-size');
+  document.body.style.removeProperty('background-position');
+  document.body.style.removeProperty('background-attachment');
+  document.body.classList.remove('has-admin-bg');
   await renderAdminBgPicker();
   showToast('Imagen eliminada');
 }

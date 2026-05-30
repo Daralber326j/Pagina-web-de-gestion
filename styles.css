@@ -1251,7 +1251,7 @@ body[data-admin-mode] .hamburger { color: #00aaff; }
 
 body[data-admin-mode] .pages-container { background: #020210; }
 
-/* Imagen de fondo del admin — se pone como pseudo-elemento del body para estar detrás de todo */
+/* Imagen de fondo del admin — background directo en body, con .has-admin-bg como activador */
 body[data-admin-mode]::before {
   content: '';
   position: fixed;
@@ -1264,6 +1264,11 @@ body[data-admin-mode]::before {
   pointer-events: none;
   opacity: 0.92;
 }
+
+/* Cuando hay imagen activa, transparentar los contenedores para que se vea */
+body[data-admin-mode].has-admin-bg .pages-container,
+body[data-admin-mode].has-admin-bg .app { background: transparent !important; }
+body[data-admin-mode].has-admin-bg #page-admin { background: transparent !important; }
 
 body[data-admin-mode] #page-admin {
   position: relative;
