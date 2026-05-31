@@ -25,6 +25,7 @@
   --text: #f2f2f2;
   --text2: #b8b8b8;
   --text3: #909090;
+  --price: var(--accent);
   --shadow: 0 4px 24px rgba(0,0,0,0.50);
   --shadow-lg: 0 12px 48px rgba(0,0,0,0.70);
   --accent: #d4a97a;
@@ -1040,6 +1041,18 @@ input, select, textarea, button {
 
 .logout-btn:hover { color: #e07070; }
 
+.sidebar-reload-btn {
+  background: none; border: none;
+  color: var(--text3); cursor: pointer;
+  font-size: 1rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: var(--radius-sm);
+  opacity: 0.5;
+  transition: opacity 0.2s;
+  touch-action: manipulation;
+}
+.sidebar-reload-btn:hover { opacity: 1; }
+
 /* ─── TOPBAR ─── */
 .topbar {
   position: fixed;
@@ -1820,7 +1833,7 @@ html[data-fontweight="bold"] button { font-weight: 600; }
 .sale-amount {
   font-family: 'Cormorant Garamond', serif;
   font-size: 1rem;
-  color: var(--accent);
+  color: var(--price, var(--accent));
 }
 
 /* ─── FILTER BAR ─── */
@@ -1914,7 +1927,7 @@ html[data-fontweight="bold"] button { font-weight: 600; }
 .product-price {
   font-family: 'Cormorant Garamond', serif;
   font-size: 1.15rem;
-  color: var(--accent);
+  color: var(--price, var(--accent));
 }
 
 .product-stock {
@@ -2181,22 +2194,25 @@ html[data-fontweight="bold"] button { font-weight: 600; }
   grid-column: 1 / -1;
 }
 .rp-btn {
-  background: var(--bg2);
+  background: var(--surface);
   border: 1px solid var(--border);
-  color: var(--text2);
+  color: var(--text);
   border-radius: 20px;
   padding: 0.3rem 0.85rem;
   font-size: 0.78rem;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
   font-family: var(--font-body);
+  opacity: 0.65;
+  touch-action: manipulation;
 }
-.rp-btn:hover { background: var(--bg3); color: var(--text); }
+.rp-btn:hover { background: var(--bg3); opacity: 1; }
 .rp-btn.active {
   background: var(--accent);
   color: var(--bg);
   border-color: var(--accent);
   font-weight: 600;
+  opacity: 1;
 }
 
 .reports-summary {

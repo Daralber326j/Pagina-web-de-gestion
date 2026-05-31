@@ -123,6 +123,7 @@
         <span id="themeIcon">☀</span>
       </button>
       <button class="logout-btn" onclick="logout()">Salir ⟶</button>
+      <button class="sidebar-reload-btn" onclick="location.reload()" title="Recargar si algo no responde">↺</button>
     </div>
   </aside>
 
@@ -474,6 +475,11 @@
             <label>Texto secundario / Botón Salir</label>
             <input type="color" id="customText2Picker" value="#a0a0a0"
                    oninput="setCustomText2(this.value)" />
+          </div>
+          <div class="adv-row">
+            <label>Color de precios</label>
+            <input type="color" id="customPricePicker" value="#d4a97a"
+                   oninput="setCustomPrice(this.value)" />
           </div>
           <div class="adv-row">
             <label>Color de fondo</label>

@@ -152,6 +152,9 @@ function setPalette(name) {
   // Sincronizar cambio a Firestore para que future pulls traigan el valor correcto
   if (typeof CloudSync !== 'undefined' && CloudSync.enabled) CloudSync.schedulePush();
   applyVideoBg(name);
+  // Reaplica overrides de apariencia para que los vars de texto se limpien o apliquen
+  // según si la nueva paleta es de vidrio o sólida
+  applyCustomAppearance();
 }
 
 // ─── VIDEO DE FONDO (paleta "Lluvia") — almacenado localmente en IndexedDB ───
@@ -1266,9 +1269,19 @@ function applyCustomAppearance() {
   const isGlass = _GLASS_PALETTES.includes(palette);
 
   if (c.accent) { root.style.setProperty('--accent', c.accent); root.style.setProperty('--accent-dark', c.accentDark || c.accent); }
-  if (c.text)   root.style.setProperty('--text', c.text);
-  if (c.text2)  { root.style.setProperty('--text2', c.text2); root.style.setProperty('--text3', c.text2); }
+  if (c.price)  root.style.setProperty('--price', c.price);
   if (c.bg)     root.style.setProperty('--bg', c.bg);
+  // Texto personalizado solo se aplica en paletas de vidrio.
+  // En paletas sólidas (negra, blanca, etc.) los colores de texto de la paleta son correctos,
+  // y un texto oscuro configurado en vidrio se volvería invisible en fondo oscuro.
+  if (isGlass) {
+    if (c.text)  root.style.setProperty('--text', c.text);
+    if (c.text2) { root.style.setProperty('--text2', c.text2); root.style.setProperty('--text3', c.text2); }
+  } else {
+    root.style.removeProperty('--text');
+    root.style.removeProperty('--text2');
+    root.style.removeProperty('--text3');
+  }
 
   const s = document.getElementById('_custom_glass_style') ||
     (() => { const el = document.createElement('style'); el.id = '_custom_glass_style'; document.head.appendChild(el); return el; })();
@@ -1352,6 +1365,14 @@ function setCustomText2(color) {
   applyCustomAppearance();
 }
 
+function setCustomPrice(color) {
+  const cfg = getConfig();
+  cfg.custom = cfg.custom || {};
+  cfg.custom.price = color;
+  DB.set('config', cfg);
+  applyCustomAppearance();
+}
+
 function setCustomBg(color) {
   const cfg = getConfig();
   cfg.custom = cfg.custom || {};
@@ -1399,9 +1420,8 @@ function resetAppearance() {
   delete cfg.accent;
   delete cfg.accentDark;
   DB.set('config', cfg);
-  // Limpiar vars inline
   const root = document.documentElement;
-  ['--accent','--accent-dark','--text','--bg'].forEach(v => root.style.removeProperty(v));
+  ['--accent','--accent-dark','--text','--text2','--text3','--bg','--price'].forEach(v => root.style.removeProperty(v));
   const s = document.getElementById('_custom_glass_style');
   if (s) s.textContent = '';
   loadSettingsPage();
@@ -1707,6 +1727,7 @@ function loadSettingsPage() {
   if (el('customAccentPicker'))     el('customAccentPicker').value     = c.accent     || '#d4a97a';
   if (el('customTextPicker'))       el('customTextPicker').value       = c.text       || '#f2f2f2';
   if (el('customText2Picker'))      el('customText2Picker').value      = c.text2      || '#a0a0a0';
+  if (el('customPricePicker'))      el('customPricePicker').value      = c.price      || '#d4a97a';
   if (el('customBgPicker'))         el('customBgPicker').value         = c.bg         || '#080808';
   if (el('customPanelColorPicker')) el('customPanelColorPicker').value = c.panelColor || '#ffffff';
   if (el('transparencySlider')) {
