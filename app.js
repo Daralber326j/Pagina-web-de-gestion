@@ -398,9 +398,6 @@ async function checkAutoLogin() {
         await CloudSync.pull(s.username);
         if (sub) sub.textContent = 'Sistema de Gestión';
       }
-      // Limpiar preferencias locales para que Firestore tenga prioridad
-      localStorage.removeItem('lum_pal');
-      localStorage.removeItem('lum_layout');
       const users = DB.get('users');
       const u = users.find(u => u.username === s.username && u.password === s.password);
       if (u) { loginSuccess(u); return; }
@@ -419,7 +416,6 @@ async function handleAdminLogin() {
   }
   isAdminSession = true;
   localStorage.setItem('lum_session', JSON.stringify({ username: u, password: p, isAdmin: true }));
-  localStorage.removeItem('lum_pal'); // limpiar para que Firestore tome prioridad
   if (typeof CloudSync !== 'undefined' && CloudSync.enabled) {
     await CloudSync.pull(ADMIN_CREDS.username);
   }
@@ -457,9 +453,8 @@ async function loginSuccess(user) {
   navigateTo(user.isAdmin ? 'admin' : 'dashboard');
   if (!user.isAdmin) {
     const _cfg = DB.getObj('config', {});
-    // Solo escribir lum_pal si NO hay ya un valor del usuario en esta sesión.
-    // Si ya está puesto (el usuario cambió paleta y recargó antes de que el push
-    // terminara), respetamos esa selección en vez de pisar con el valor de Firestore.
+    // Setear lum_pal solo si no existe ya (el reload conserva la paleta local).
+    // En login explícito, handleLogin() lo borra antes para que Firestore tome prioridad.
     if (!localStorage.getItem('lum_pal')) {
       localStorage.setItem('lum_pal', _cfg.palette || 'black');
     }
@@ -470,12 +465,22 @@ async function loginSuccess(user) {
     refreshNavLabels();
     _updateLastSeen(user.username);
     _startPresenceHeartbeat(user.username);
-    // Listener en tiempo real: actualiza UI cuando otro dispositivo hace cambios
+    // Listener en tiempo real: actualiza datos cuando otro dispositivo hace cambios
     if (typeof CloudSync !== 'undefined') {
       CloudSync.startListener(() => {
+        if (!currentUser || currentUser.isAdmin) return;
+        const appEl = document.getElementById('appMain');
+        if (!appEl || appEl.classList.contains('hidden')) return;
         applySettings();
+        // Re-renderizar solo el contenido de la página activa sin tocar el DOM entero
+        // (navigateTo() puede romper touch events en móvil si se llama durante interacción)
         const activePage = document.querySelector('.page.active');
-        if (activePage) navigateTo(activePage.id.replace('page-', ''));
+        if (!activePage) return;
+        const pageId = activePage.id.replace('page-', '');
+        if (pageId === 'dashboard') renderDashboard();
+        else if (pageId === 'products') renderProducts();
+        else if (pageId === 'clients') renderClients();
+        else if (pageId === 'reports') renderReports();
         showToast('↻ Datos actualizados desde otro dispositivo');
       });
     }
@@ -511,11 +516,9 @@ async function handleLogin() {
 
   if (!user) { err.textContent = 'Usuario o contraseña incorrectos.'; return; }
 
-  // Login explícito: limpiar lum_pal para que se aplique la paleta guardada en Firestore
-  // Esto garantiza que los cambios de otro dispositivo se sincronicen
+  // Login manual: limpiar para que Firestore tome prioridad (cross-device sync)
   localStorage.removeItem('lum_pal');
   localStorage.removeItem('lum_layout');
-
   localStorage.setItem('lum_session', JSON.stringify({ username: u, password: p }));
   err.textContent = '';
   loginSuccess(user);
@@ -1264,64 +1267,64 @@ function applyCustomAppearance() {
 
   if (c.accent) { root.style.setProperty('--accent', c.accent); root.style.setProperty('--accent-dark', c.accentDark || c.accent); }
   if (c.text)   root.style.setProperty('--text', c.text);
+  if (c.text2)  { root.style.setProperty('--text2', c.text2); root.style.setProperty('--text3', c.text2); }
   if (c.bg)     root.style.setProperty('--bg', c.bg);
 
   const s = document.getElementById('_custom_glass_style') ||
     (() => { const el = document.createElement('style'); el.id = '_custom_glass_style'; document.head.appendChild(el); return el; })();
 
-  // "Transparencia" (0-95) tiene prioridad sobre "Solidez" si está activa
-  // transparencia 0 = sólido (alpha=1), transparencia 95 = casi invisible (alpha≈0.05)
-  let finalAlpha;
-  if (c.uiTransparency !== undefined && +c.uiTransparency > 0) {
-    finalAlpha = 1 - (+c.uiTransparency / 100);
-  } else if (c.glassAlpha !== undefined) {
-    finalAlpha = +c.glassAlpha;
-  }
+  // Paletas sólidas: nunca aplicar CSS personalizado
+  if (!isGlass) { s.textContent = ''; return; }
 
-  const hasCustom = finalAlpha !== undefined || c.panelColor;
+  // Solidez y Transparencia son independientes y se multiplican
+  // Solidez (glassAlpha): 0.05=vidrio fino → 1=panel sólido
+  // Transparencia (uiTransparency): 0=sin efecto → 95=casi invisible como cristal limpio
+  const aSolid  = (c.glassAlpha !== undefined)                              ? +c.glassAlpha            : 1;
+  const aTransp = (c.uiTransparency !== undefined && +c.uiTransparency > 0) ? 1 - +c.uiTransparency/100 : 1;
+  const finalAlpha = aSolid * aTransp;
 
-  if (hasCustom) {
-    // Aplicar a TODAS las paletas cuando hay transparencia activa,
-    // solo a paletas de vidrio cuando es solo solidez.
-    const applyToAll = c.uiTransparency !== undefined && +c.uiTransparency > 0;
-    const shouldApply = applyToAll || isGlass;
+  const hasCustom = c.glassAlpha !== undefined ||
+                    (c.uiTransparency !== undefined && +c.uiTransparency > 0) ||
+                    c.panelColor;
+  if (!hasCustom) { s.textContent = ''; return; }
 
-    if (shouldApply) {
-      const a   = finalAlpha !== undefined ? finalAlpha : 0.5;
-      const a2  = Math.min(a + 0.18, 1);
-      const hex = c.panelColor || (isGlass ? '#ffffff' : null);
+  const a      = Math.max(0.02, Math.min(1, finalAlpha));
+  const aModal = Math.min(a + 0.15, 1);
+  const sel    = `html[data-palette="${palette}"]`;
 
-      // Para paletas sólidas sin color personalizado: extraer color de superficie
-      // usando el propio CSS (simplificado: usar el valor que tenga sentido)
-      let rgb;
-      if (hex) {
-        const r = parseInt(hex.slice(1,3), 16);
-        const g = parseInt(hex.slice(3,5), 16);
-        const b = parseInt(hex.slice(5,7), 16);
-        rgb = `${r},${g},${b}`;
-      } else {
-        // Para paletas sólidas, usar el color de superficie como base aproximada
-        rgb = '20,20,20';
-      }
-
-      s.textContent = `
-        html[data-palette] .sidebar,
-        html[data-palette] .topbar,
-        html[data-palette] .table-card,
-        html[data-palette] .settings-card,
-        html[data-palette] .stat-card,
-        html[data-palette] .chart-card,
-        html[data-palette] .login-card,
-        html[data-palette] .client-row,
-        html[data-palette] .product-card { background: rgba(${rgb},${a}) !important; }
-        html[data-palette] .modal        { background: rgba(${rgb},${a2}) !important; }
-      `;
-    } else {
-      s.textContent = '';
-    }
+  // Color base de paneles: panelColor si está configurado, si no el color natural de la paleta.
+  // agua = azul oscuro (subir solidez → más oscuro), el resto = blanco (subir → más sólido blanco).
+  const _BASE = { agua: '5,14,26', cristal: '255,255,255', perla: '255,255,255', lavanda: '255,255,255' };
+  const _MODAL_BASE = { agua: '5,18,35', cristal: '235,248,255', perla: '235,242,252', lavanda: '255,255,255' };
+  let pRgb;
+  if (c.panelColor && /^#[0-9a-fA-F]{6}$/.test(c.panelColor)) {
+    const r = parseInt(c.panelColor.slice(1,3),16);
+    const g = parseInt(c.panelColor.slice(3,5),16);
+    const b = parseInt(c.panelColor.slice(5,7),16);
+    pRgb = `${r},${g},${b}`;
   } else {
-    s.textContent = '';
+    pRgb = _BASE[palette] || '255,255,255';
   }
+  const mRgb = _MODAL_BASE[palette] || '255,255,255';
+
+  const logoutRule = c.text2
+    ? `${sel} .logout-btn, ${sel} .topbar-logout { color: ${c.text2} !important; }`
+    : '';
+
+  s.textContent = `
+    ${sel} .table-card,
+    ${sel} .settings-card,
+    ${sel} .stat-card,
+    ${sel} .chart-card,
+    ${sel} .product-card,
+    ${sel} .client-row,
+    ${sel} .sale-form-card,
+    ${sel} .sale-history-card { background: rgba(${pRgb},${a}) !important; }
+    ${sel} .sidebar            { background: rgba(${pRgb},${a}) !important; }
+    ${sel} .topbar             { background: rgba(${pRgb},${a}) !important; }
+    ${sel} .modal              { background: rgba(${mRgb},${aModal}) !important; }
+    ${logoutRule}
+  `;
 }
 
 function setCustomAccent(color) {
@@ -1337,6 +1340,14 @@ function setCustomText(color) {
   const cfg = getConfig();
   cfg.custom = cfg.custom || {};
   cfg.custom.text = color;
+  DB.set('config', cfg);
+  applyCustomAppearance();
+}
+
+function setCustomText2(color) {
+  const cfg = getConfig();
+  cfg.custom = cfg.custom || {};
+  cfg.custom.text2 = color;
   DB.set('config', cfg);
   applyCustomAppearance();
 }
@@ -1695,6 +1706,7 @@ function loadSettingsPage() {
   // Apariencia avanzada — rellenar controles
   if (el('customAccentPicker'))     el('customAccentPicker').value     = c.accent     || '#d4a97a';
   if (el('customTextPicker'))       el('customTextPicker').value       = c.text       || '#f2f2f2';
+  if (el('customText2Picker'))      el('customText2Picker').value      = c.text2      || '#a0a0a0';
   if (el('customBgPicker'))         el('customBgPicker').value         = c.bg         || '#080808';
   if (el('customPanelColorPicker')) el('customPanelColorPicker').value = c.panelColor || '#ffffff';
   if (el('transparencySlider')) {

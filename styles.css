@@ -170,7 +170,9 @@
 [data-palette="agua"] .table-card,
 [data-palette="agua"] .settings-card,
 [data-palette="agua"] .stat-card,
-[data-palette="agua"] .chart-card {
+[data-palette="agua"] .chart-card,
+[data-palette="agua"] .sale-form-card,
+[data-palette="agua"] .sale-history-card {
   background: rgba(255,255,255,0.04) !important;
   backdrop-filter: blur(22px) saturate(160%);
   -webkit-backdrop-filter: blur(22px) saturate(160%);
@@ -293,7 +295,9 @@
 [data-palette="cristal"] .table-card,
 [data-palette="cristal"] .settings-card,
 [data-palette="cristal"] .stat-card,
-[data-palette="cristal"] .chart-card {
+[data-palette="cristal"] .chart-card,
+[data-palette="cristal"] .sale-form-card,
+[data-palette="cristal"] .sale-history-card {
   background: rgba(255,255,255,0.52) !important;
   backdrop-filter: blur(20px) saturate(160%);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
@@ -424,7 +428,9 @@
 [data-palette="perla"] .table-card,
 [data-palette="perla"] .settings-card,
 [data-palette="perla"] .stat-card,
-[data-palette="perla"] .chart-card {
+[data-palette="perla"] .chart-card,
+[data-palette="perla"] .sale-form-card,
+[data-palette="perla"] .sale-history-card {
   background: rgba(255,255,255,0.2) !important;
   backdrop-filter: blur(28px) saturate(170%);
   -webkit-backdrop-filter: blur(28px) saturate(170%);
@@ -589,7 +595,9 @@
 [data-palette="lavanda"] .table-card,
 [data-palette="lavanda"] .settings-card,
 [data-palette="lavanda"] .stat-card,
-[data-palette="lavanda"] .chart-card {
+[data-palette="lavanda"] .chart-card,
+[data-palette="lavanda"] .sale-form-card,
+[data-palette="lavanda"] .sale-history-card {
   background: rgba(255,255,255,0.30) !important;
   backdrop-filter: blur(24px) saturate(135%);
   -webkit-backdrop-filter: blur(24px) saturate(135%);

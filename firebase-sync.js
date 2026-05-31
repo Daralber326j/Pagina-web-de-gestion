@@ -144,6 +144,9 @@ const CloudSync = {
     if (!this.enabled || !this._userId) return;
     this.stopListener();
     this._onRemoteUpdate = onUpdate;
+    // Marcar como "recién sincronizado" para ignorar el snapshot inicial
+    // (que es el mismo estado que acabamos de hacer pull — no es un cambio remoto)
+    this._lastPushAt = Date.now();
     const db = firebase.firestore();
     this._listener = db.collection(this.COLLECTION)
       .doc(this._docId(this._userId))
