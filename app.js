@@ -445,7 +445,9 @@ async function loginSuccess(user) {
   if (typeof CloudSync !== 'undefined') {
     CloudSync.setUser(user.isAdmin ? ADMIN_CREDS.username : user.username);
     CloudSync.showInitialStatus();
-    if (!user.isAdmin) CloudSync.push();
+    // No push al iniciar sesión: el pull ya trajo los datos más recientes de Firestore.
+    // Hacer push aquí sobrescribiría datos de otro dispositivo que aún no llegaron al pull.
+    // Los cambios se envían solos vía schedulePush() cuando el usuario edita algo.
   }
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('appMain').classList.remove('hidden');
@@ -1335,9 +1337,10 @@ function applyCustomAppearance() {
     ${sel} .sale-history-card { background: rgba(${pRgb},${a}) !important; }
     ${sel} .sidebar            { background: rgba(${pRgb},${a}) !important; }
     ${sel} .topbar             { background: rgba(${pRgb},${a}) !important; }
-    ${sel} .modal              { background: rgba(${mRgb},${aModal}) !important; }
     ${logoutRule}
   `;
+  // Los modales NO se tocan aquí: cada paleta tiene sus valores de opacidad bien
+  // calibrados (agua: 0.78, cristal: 0.90, etc.) y no deben ser sobreescritos.
 }
 
 function setCustomAccent(color) {
@@ -1753,12 +1756,14 @@ function openProductModal(prodId = null) {
   editingProductId = prodId;
   productImageB64 = null;
   const title = document.getElementById('productModalTitle');
-  const fields = ['prodName','prodCategory','prodCost','prodPrice','prodStock','prodDesc'];
 
-  fields.forEach(f => {
+  // Limpiar todos los campos — los <select> se resetean al primer índice
+  ['prodName','prodCost','prodPrice','prodStock','prodDesc'].forEach(f => {
     const el = document.getElementById(f);
     if (el) el.value = '';
   });
+  const catEl = document.getElementById('prodCategory');
+  if (catEl) catEl.selectedIndex = 0;
 
   document.getElementById('prodImagePreview').classList.add('hidden');
   document.getElementById('prodImagePreview').src = '';

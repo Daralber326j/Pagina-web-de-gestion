@@ -221,6 +221,10 @@
 [data-palette="agua"] input::placeholder,
 [data-palette="agua"] textarea::placeholder { color: rgba(100,195,225,0.42) !important; }
 [data-palette="agua"] select option { background: #081626; color: #d0f0ff; }
+[data-palette="agua"] .image-upload-area { background: rgba(5,18,35,0.82) !important; border-color: rgba(34,211,238,0.20) !important; }
+[data-palette="cristal"] .image-upload-area { background: rgba(200,230,255,0.55) !important; }
+[data-palette="perla"] .image-upload-area { background: rgba(255,255,255,0.18) !important; }
+[data-palette="lavanda"] .image-upload-area { background: rgba(255,255,255,0.22) !important; }
 
 /* Accent elements */
 [data-palette="agua"] .logo-icon { color: #22d3ee; text-shadow: 0 0 14px rgba(34,211,238,0.55); }
@@ -551,8 +555,9 @@
 [data-palette="lavanda"] .page-header > h1,
 [data-palette="lavanda"] .topbar-title { color: #eaeaea !important; }
 
-/* El .app va encima del video de fondo */
-[data-palette="lavanda"] .app { position: relative; z-index: 1; }
+/* z-index no necesario: el video ahora está en z-index:-1 y queda detrás del contenido
+   de forma natural sin necesitar que .app cree un contexto de apilamiento.
+   Tener z-index:1 en .app causaba freeze de touch events en iOS con el admin lluvia. */
 
 /* ── VIDRIO (fórmula): ──────────────────────────────────────────
    El blur difumina la lluvia de atrás → efecto cristal mojado.
@@ -2387,7 +2392,7 @@ html[data-fontweight="bold"] button { font-weight: 600; }
 
 /* ─── IMAGE UPLOAD ─── */
 .image-upload-area {
-  background: var(--bg2);
+  background: var(--surface2, var(--bg2));
   border: 2px dashed var(--border);
   border-radius: var(--radius);
   min-height: 140px;

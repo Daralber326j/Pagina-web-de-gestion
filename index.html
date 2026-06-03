@@ -605,10 +605,10 @@
       <h2 id="productModalTitle">Nuevo Producto</h2>
       <button onclick="closeModal('productModal')">✕</button>
     </div>
-    <div class="modal-body">
+    <div class="modal-body" autocomplete="off">
       <div class="input-group">
         <label>Nombre *</label>
-        <input type="text" id="prodName" placeholder="Ej: Perfume Chanel N°5" />
+        <input type="text" id="prodName" placeholder="Ej: Perfume Chanel N°5" autocomplete="off" />
       </div>
       <div class="input-group">
         <label>Categoría</label>
@@ -623,20 +623,20 @@
       <div class="two-col">
         <div class="input-group">
           <label>Precio de Costo</label>
-          <input type="number" id="prodCost" placeholder="0.00" min="0" step="0.01" />
+          <input type="number" id="prodCost" placeholder="0.00" min="0" step="0.01" autocomplete="off" />
         </div>
         <div class="input-group">
           <label>Precio de Venta *</label>
-          <input type="number" id="prodPrice" placeholder="0.00" min="0" step="0.01" />
+          <input type="number" id="prodPrice" placeholder="0.00" min="0" step="0.01" autocomplete="off" />
         </div>
       </div>
       <div class="input-group">
         <label>Stock inicial *</label>
-        <input type="number" id="prodStock" placeholder="0" min="0" />
+        <input type="number" id="prodStock" placeholder="0" min="0" autocomplete="off" />
       </div>
       <div class="input-group">
         <label>Descripción</label>
-        <textarea id="prodDesc" rows="2" placeholder="Descripción opcional..."></textarea>
+        <textarea id="prodDesc" rows="2" placeholder="Descripción opcional..." autocomplete="off"></textarea>
       </div>
       <div class="input-group">
         <label>Foto del producto</label>
@@ -664,22 +664,22 @@
       <h2 id="clientModalTitle">Nuevo Cliente</h2>
       <button onclick="closeModal('clientModal')">✕</button>
     </div>
-    <div class="modal-body">
+    <div class="modal-body" autocomplete="off">
       <div class="input-group">
         <label>Nombre *</label>
-        <input type="text" id="clientName" placeholder="Nombre completo" />
+        <input type="text" id="clientName" placeholder="Nombre completo" autocomplete="off" />
       </div>
       <div class="input-group">
         <label>Teléfono</label>
-        <input type="text" id="clientPhone" placeholder="Ej: 809-000-0000" />
+        <input type="text" id="clientPhone" placeholder="Ej: 809-000-0000" autocomplete="off" />
       </div>
       <div class="input-group">
         <label>Correo</label>
-        <input type="email" id="clientEmail" placeholder="correo@ejemplo.com" />
+        <input type="email" id="clientEmail" placeholder="correo@ejemplo.com" autocomplete="off" />
       </div>
       <div class="input-group">
         <label>Notas</label>
-        <textarea id="clientNotes" rows="2" placeholder="Notas adicionales..."></textarea>
+        <textarea id="clientNotes" rows="2" placeholder="Notas adicionales..." autocomplete="off"></textarea>
       </div>
     </div>
     <div class="modal-footer">
