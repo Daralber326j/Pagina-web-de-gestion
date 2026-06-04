@@ -1,14 +1,16 @@
 /* ═══════════════════════════════════════════
-   LUMIÈRE — Módulo de Sincronización en la Nube
+   LUMIÈRE — Módulo de Sincronización Incremental
 
-   Arquitectura de documentos Firestore:
-   · stores/{userId}           — datos principales (sin imágenes de productos)
-   · stores/{userId}_img0      — primer bloque de imágenes (≤ 700 KB)
-   · stores/{userId}_img1      — segundo bloque si se necesita, y así sucesivamente
-   · El campo _imgDocCount en el doc principal indica cuántos bloques existen.
+   Documentos Firestore:
+   · stores/{userId}       — datos principales (sin imágenes)
+   · stores/{userId}_img0  — imágenes bloque 0  (≤ 700 KB)
+   · stores/{userId}_img1  — imágenes bloque 1, si se necesita, etc.
 
-   Esto permite almacenar cientos de imágenes de productos sin chocar con
-   el límite de 1 MB por documento de Firestore.
+   Solo se sube lo que cambió:
+   · Si editas un cliente  → solo sube "clients"
+   · Si cambias precio     → solo sube "products" (sin imágenes)
+   · Si cambias una foto   → solo sube esa imagen en su bloque
+   · Primera vez / cuenta nueva → push completo
 ═══════════════════════════════════════════ */
 
 const CloudSync = {
@@ -22,19 +24,35 @@ const CloudSync = {
   _listener:       null,
   _lastPushAt:     0,
   _onRemoteUpdate: null,
+
+  // ── Estado de cambios pendientes ──────────────────────────────────────
+  _dirtyKeys:   new Set(),   // qué claves cambiaron (products, clients, …)
+  _dirtyImgIds: new Set(),   // IDs de productos cuya imagen cambió
+  //   "__del__<id>" significa que la imagen de ese producto fue eliminada
+
+  // Índice local: productId → número de doc de imágenes (0, 1, 2…)
+  // Se persiste en localStorage como 'lum_imgIdx'
+  _imgIdx: {},
+
   COLLECTION: 'stores',
-  KEYS: ['products', 'clients', 'sales', 'config', 'users', 'activityLog', 'navLabels', 'trash'],
+  KEYS: ['products','clients','sales','config','users','activityLog','navLabels','trash'],
+  _IMG_CHUNK: 700 * 1024,   // máx caracteres por doc de imágenes
 
-  // Máximo de caracteres por documento de imágenes (≈ 700 KB con margen)
-  _IMG_CHUNK: 700 * 1024,
-
-  _docId(username) {
-    return (username || '').toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 128);
+  // ── Helpers ──────────────────────────────────────────────────────────
+  _docId(u) {
+    return (u || '').toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 128);
   },
 
-  // ── Helpers de imágenes ──────────────────────────────────────────────
+  _loadImgIdx() {
+    try { this._imgIdx = JSON.parse(localStorage.getItem('lum_imgIdx') || '{}'); }
+    catch { this._imgIdx = {}; }
+  },
 
-  // Extrae las imágenes de los productos, devuelve productos limpios + mapa de imágenes
+  _saveImgIdx() {
+    localStorage.setItem('lum_imgIdx', JSON.stringify(this._imgIdx));
+  },
+
+  // Extrae imágenes de los productos → { clean, imgMap }
   _stripImages(products) {
     const imgMap = {};
     const clean = (products || []).map(p => {
@@ -48,44 +66,33 @@ const CloudSync = {
     return { clean, imgMap };
   },
 
-  // Restaura las imágenes en los productos usando imgMap y/o fallbackMap (localStorage)
-  _restoreImages(products, imgMap, fallbackMap = {}) {
+  // Restaura imágenes en productos desde imgMap y/o fallback (localStorage)
+  _restoreImages(products, imgMap, fallback = {}) {
     return (products || []).map(p => {
       if (p._hasImg) {
         const { _hasImg, ...rest } = p;
-        return { ...rest, image: imgMap[p.id] || fallbackMap[p.id] || null };
+        return { ...rest, image: imgMap[p.id] || fallback[p.id] || null };
       }
       return p;
     });
   },
 
-  // Divide el mapa de imágenes en trozos de ≤ _IMG_CHUNK caracteres
+  // Divide un mapa de imágenes en trozos de ≤ _IMG_CHUNK chars
   _chunkImgMap(imgMap) {
     const chunks = [{}];
     let size = 0;
     for (const [id, b64] of Object.entries(imgMap)) {
-      const len = b64.length;
-      if (size + len > this._IMG_CHUNK && size > 0) {
+      if (size + b64.length > this._IMG_CHUNK && size > 0) {
         chunks.push({});
         size = 0;
       }
       chunks[chunks.length - 1][id] = b64;
-      size += len;
+      size += b64.length;
     }
     return chunks;
   },
 
-  // Escribe los documentos de imágenes en Firestore
-  async _writeImgDocs(db, docId, chunks, ts) {
-    await Promise.all(chunks.map((chunk, i) =>
-      db.collection(this.COLLECTION)
-        .doc(`${docId}_img${i}`)
-        .set({ images: chunk, syncedAt: ts })
-    ));
-    return chunks.length;
-  },
-
-  // Lee y fusiona todos los documentos de imágenes
+  // Lee todos los docs de imágenes y devuelve { imgMap, idx }
   async _readImgDocs(db, docId, count) {
     if (!count || count < 1) count = 1;
     const snaps = await Promise.all(
@@ -93,22 +100,54 @@ const CloudSync = {
         db.collection(this.COLLECTION).doc(`${docId}_img${i}`).get()
       )
     );
-    const imgMap = {};
-    snaps.forEach(s => { if (s.exists) Object.assign(imgMap, s.data().images || {}); });
-    return imgMap;
+    const imgMap = {}, idx = {};
+    snaps.forEach((s, i) => {
+      if (s.exists) {
+        Object.entries(s.data().images || {}).forEach(([id, b64]) => {
+          imgMap[id] = b64;
+          idx[id] = i;
+        });
+      }
+    });
+    return { imgMap, idx };
+  },
+
+  // ── Marcar qué cambió (llamado desde DB.set antes de escribir) ────────
+  markDirty(key, oldVal, newVal) {
+    this._dirtyKeys.add(key);
+    if (key === 'products') this._diffImages(oldVal, newVal);
+  },
+
+  // Detecta qué imágenes cambiaron comparando old vs new products
+  _diffImages(oldProds, newProds) {
+    const oldMap = {};
+    (oldProds || []).forEach(p => { oldMap[p.id] = p.image || null; });
+
+    (newProds || []).forEach(p => {
+      const oldImg = oldMap[p.id] !== undefined ? oldMap[p.id] : '__new__';
+      if ((p.image || null) !== oldImg || oldImg === '__new__') {
+        this._dirtyImgIds.add(p.id);
+      }
+      delete oldMap[p.id];
+    });
+
+    // Productos que ya no existen → borrar su imagen del doc
+    Object.keys(oldMap).forEach(id => this._dirtyImgIds.add('__del__' + id));
   },
 
   // ── USUARIO ──────────────────────────────────────────────────────────
-  setUser(username) { this._userId = username; },
+  setUser(u) { this._userId = u; },
 
   clearUser() {
     this._userId = null;
     clearTimeout(this._pushTimer);
     this._pushTimer = null;
     this.stopListener();
+    this._dirtyKeys.clear();
+    this._dirtyImgIds.clear();
   },
 
-  // ── PUSH (local → nube) ──────────────────────────────────────────────
+  // ── PUSH incremental ─────────────────────────────────────────────────
   schedulePush() {
     if (!this.enabled || !this._userId) return;
     clearTimeout(this._pushTimer);
@@ -117,6 +156,109 @@ const CloudSync = {
 
   async push() {
     if (!this.enabled || !this._userId) return;
+    if (this._dirtyKeys.size === 0 && this._dirtyImgIds.size === 0) return;
+
+    // Capturar y limpiar el estado sucio (si falla, se re-ensuciará en el catch)
+    const dirtyKeys   = new Set(this._dirtyKeys);
+    const dirtyImages = new Set(this._dirtyImgIds);
+    this._dirtyKeys.clear();
+    this._dirtyImgIds.clear();
+
+    try {
+      this._setStatus('syncing');
+      this._lastPushAt = Date.now();
+      const db    = firebase.firestore();
+      const docId = this._docId(this._userId);
+      const ts    = new Date().toISOString();
+
+      // Actualización parcial del doc principal (solo claves sucias)
+      const updates = { syncedAt: ts };
+      dirtyKeys.forEach(k => {
+        const raw = localStorage.getItem('lum_' + k);
+        if (!raw) return;
+        try {
+          let parsed = JSON.parse(raw);
+          if (k === 'products' && Array.isArray(parsed)) {
+            parsed = this._stripImages(parsed).clean;
+          } else if (k === 'activityLog' && Array.isArray(parsed)) {
+            parsed = parsed.slice(-100);
+          }
+          updates[k] = parsed;
+        } catch { /* skip */ }
+      });
+
+      // Subir SOLO las imágenes que cambiaron
+      if (dirtyImages.size > 0) {
+        await this._incrementalImgPush(db, docId, dirtyImages, ts);
+      }
+
+      // Actualizar doc principal (update en vez de set → solo toca los campos indicados)
+      await db.collection(this.COLLECTION).doc(docId).update(updates);
+      this._setStatus('ok');
+
+    } catch (e) {
+      if (e && e.code === 'not-found') {
+        // El documento no existe aún → push completo
+        return this._fullPush();
+      }
+      console.warn('[CloudSync] Error al sincronizar:', e && e.message);
+      this._setStatus('error');
+      // Devolver al estado sucio para que el próximo schedulePush lo reintente
+      dirtyKeys.forEach(k   => this._dirtyKeys.add(k));
+      dirtyImages.forEach(id => this._dirtyImgIds.add(id));
+    }
+  },
+
+  // Sube solo las imágenes marcadas como sucias usando dot-notation update
+  async _incrementalImgPush(db, docId, dirtyImgIds, ts) {
+    this._loadImgIdx();
+    const products = (() => {
+      try { return JSON.parse(localStorage.getItem('lum_products') || '[]'); } catch { return []; }
+    })();
+    const imgMap = {};
+    products.forEach(p => { if (p.image) imgMap[p.id] = p.image; });
+
+    // Agrupar cambios por número de doc de imágenes
+    const perDoc = {}; // { docN: { 'images.id': value | FieldValue.delete() } }
+    const FVdel  = firebase.firestore.FieldValue.delete();
+
+    dirtyImgIds.forEach(rawId => {
+      const isDel = rawId.startsWith('__del__');
+      const id    = isDel ? rawId.slice(7) : rawId;
+      const docN  = this._imgIdx[id] !== undefined ? this._imgIdx[id] : 0;
+
+      if (!perDoc[docN]) perDoc[docN] = { syncedAt: ts };
+
+      if (isDel) {
+        perDoc[docN][`images.${id}`] = FVdel;
+        delete this._imgIdx[id];
+      } else if (imgMap[id]) {
+        perDoc[docN][`images.${id}`] = imgMap[id];
+        this._imgIdx[id] = docN;
+      }
+    });
+
+    // Aplicar actualizaciones a cada doc de imágenes
+    await Promise.all(Object.entries(perDoc).map(async ([docN, upd]) => {
+      const ref = db.collection(this.COLLECTION).doc(`${docId}_img${docN}`);
+      try {
+        await ref.update(upd);
+      } catch (err) {
+        // El doc de imágenes aún no existe → crearlo y reintentar
+        if (err && err.code === 'not-found') {
+          await ref.set({ images: {}, syncedAt: ts });
+          await ref.update(upd);
+        } else {
+          throw err;
+        }
+      }
+    }));
+
+    this._saveImgIdx();
+  },
+
+  // Push completo (primera vez o cuando update() falla por doc inexistente)
+  async _fullPush() {
     try {
       this._setStatus('syncing');
       this._lastPushAt = Date.now();
@@ -133,27 +275,33 @@ const CloudSync = {
         try {
           let parsed = JSON.parse(raw);
           if (k === 'products' && Array.isArray(parsed)) {
-            const { clean, imgMap: map } = this._stripImages(parsed);
-            parsed = clean;
-            imgMap = map;
+            const r = this._stripImages(parsed);
+            parsed  = r.clean;
+            imgMap  = r.imgMap;
           } else if (k === 'activityLog' && Array.isArray(parsed)) {
-            // Solo últimos 100 registros en Firestore; 500 se mantienen en local
             parsed = parsed.slice(-100);
           }
           mainData[k] = parsed;
         } catch { /* skip */ }
       });
 
-      // Escribir imágenes primero (en paralelo, bloques independientes)
-      const chunks       = this._chunkImgMap(imgMap);
-      const imgDocCount  = await this._writeImgDocs(db, docId, chunks, ts);
-      mainData._imgDocCount = imgDocCount;
+      // Escribir docs de imágenes en paralelo
+      const chunks      = this._chunkImgMap(imgMap);
+      const newIdx      = {};
+      await Promise.all(chunks.map((chunk, i) => {
+        Object.keys(chunk).forEach(id => { newIdx[id] = i; });
+        return db.collection(this.COLLECTION).doc(`${docId}_img${i}`).set({ images: chunk, syncedAt: ts });
+      }));
+      mainData._imgDocCount = chunks.length;
 
-      // Escribir documento principal
       await db.collection(this.COLLECTION).doc(docId).set(mainData);
+
+      // Guardar índice local
+      this._imgIdx = newIdx;
+      this._saveImgIdx();
       this._setStatus('ok');
     } catch (e) {
-      console.warn('[CloudSync] Error al sincronizar:', e.message);
+      console.warn('[CloudSync] Error en push completo:', e && e.message);
       this._setStatus('error');
     }
   },
@@ -171,9 +319,8 @@ const CloudSync = {
 
       const data        = mainSnap.data();
       const imgDocCount = data._imgDocCount || 1;
-      const imgMap      = await this._readImgDocs(db, docId, imgDocCount);
+      const { imgMap, idx } = await this._readImgDocs(db, docId, imgDocCount);
 
-      // Restaurar imágenes en los productos antes de guardar en localStorage
       if (Array.isArray(data.products)) {
         data.products = this._restoreImages(data.products, imgMap);
       }
@@ -183,10 +330,15 @@ const CloudSync = {
           localStorage.setItem('lum_' + k, JSON.stringify(data[k]));
         }
       });
+
+      // Guardar índice de imágenes para futuros pushes incrementales
+      this._imgIdx = idx;
+      this._saveImgIdx();
+
       this._setStatus('ok');
       return true;
     } catch (e) {
-      console.warn('[CloudSync] No se pudieron obtener datos:', e.message);
+      console.warn('[CloudSync] Error al obtener datos:', e && e.message);
       this._setStatus('error');
       return false;
     }
@@ -197,7 +349,7 @@ const CloudSync = {
     if (!this.enabled || !this._userId) return;
     this.stopListener();
     this._onRemoteUpdate = onUpdate;
-    this._lastPushAt = Date.now(); // ignorar snapshot inicial
+    this._lastPushAt = Date.now();
     const db    = firebase.firestore();
     const docId = this._docId(this._userId);
 
@@ -208,21 +360,19 @@ const CloudSync = {
 
         const data = doc.data();
 
-        // Para productos con _hasImg, usar las imágenes que ya están en localStorage
-        // (las imágenes se sincronizan en el próximo pull completo, no en el listener)
         if (Array.isArray(data.products)) {
-          const localProds   = JSON.parse(localStorage.getItem('lum_products') || '[]');
-          const localImgMap  = {};
-          localProds.forEach(p => { if (p.image) localImgMap[p.id] = p.image; });
-          data.products = this._restoreImages(data.products, {}, localImgMap);
+          const localProds = (() => { try { return JSON.parse(localStorage.getItem('lum_products') || '[]'); } catch { return []; } })();
+          const localImgs  = {};
+          localProds.forEach(p => { if (p.image) localImgs[p.id] = p.image; });
+          data.products = this._restoreImages(data.products, {}, localImgs);
         }
 
         let changed = false;
         this.KEYS.forEach(k => {
           if (data[k] !== undefined) {
-            const newVal = JSON.stringify(data[k]);
-            if (localStorage.getItem('lum_' + k) !== newVal) {
-              localStorage.setItem('lum_' + k, newVal);
+            const v = JSON.stringify(data[k]);
+            if (localStorage.getItem('lum_' + k) !== v) {
+              localStorage.setItem('lum_' + k, v);
               changed = true;
             }
           }
@@ -233,11 +383,9 @@ const CloudSync = {
           if (data.config.layout)  localStorage.setItem('lum_layout', data.config.layout);
         }
 
-        if (changed && typeof this._onRemoteUpdate === 'function') {
-          this._onRemoteUpdate();
-        }
+        if (changed && typeof this._onRemoteUpdate === 'function') this._onRemoteUpdate();
       }, err => {
-        console.warn('[CloudSync] Listener error:', err.message);
+        console.warn('[CloudSync] Listener error:', err && err.message);
       });
   },
 
@@ -251,7 +399,7 @@ const CloudSync = {
     if (!el) return;
     if (state === 'syncing') {
       el.textContent = '↻';
-      el.title = 'Sincronizando...';
+      el.title = 'Sincronizando…';
       el.style.color = 'var(--text3)';
     } else if (state === 'ok') {
       el.textContent = '☁';
@@ -263,7 +411,7 @@ const CloudSync = {
       el.style.color = '#e0a870';
     } else {
       el.textContent = this.enabled ? '☁' : '';
-      el.title = this.enabled ? 'Nube conectada' : '';
+      el.title       = this.enabled ? 'Nube conectada' : '';
       el.style.color = 'var(--text3)';
     }
   },
@@ -283,12 +431,10 @@ const CloudSync = {
           products: [], clients: [], sales: [],
           activityLog: [], navLabels: [],
         }),
-        db.collection(this.COLLECTION).doc(`${docId}_img0`).set({
-          images: {}, syncedAt: ts,
-        }),
+        db.collection(this.COLLECTION).doc(`${docId}_img0`).set({ images: {}, syncedAt: ts }),
       ]);
     } catch(e) {
-      console.warn('[CloudSync] Error al crear tienda en la nube:', e.message);
+      console.warn('[CloudSync] Error al crear tienda:', e && e.message);
     }
   },
 

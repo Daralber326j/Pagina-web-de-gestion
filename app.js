@@ -9,6 +9,11 @@ const DB = {
   get:    (k)      => { try { return JSON.parse(localStorage.getItem('lum_' + k)) || []; } catch { return []; } },
   getObj: (k, def = {}) => { try { return JSON.parse(localStorage.getItem('lum_' + k)) || def; } catch { return def; } },
   set:    (k, v)   => {
+    if (typeof CloudSync !== 'undefined') {
+      // Leer valor anterior ANTES de pisar, para que CloudSync sepa qué cambió
+      const old = localStorage.getItem('lum_' + k);
+      CloudSync.markDirty(k, old ? (() => { try { return JSON.parse(old); } catch { return null; } })() : null, v);
+    }
     localStorage.setItem('lum_' + k, JSON.stringify(v));
     if (typeof CloudSync !== 'undefined') CloudSync.schedulePush();
   },
