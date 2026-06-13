@@ -36,7 +36,8 @@ const CloudSync = {
 
   COLLECTION: 'stores',
   KEYS: ['products','clients','sales','config','users','activityLog','navLabels','trash'],
-  _IMG_CHUNK: 700 * 1024,   // máx caracteres por doc de imágenes
+  _IMG_CHUNK: 700 * 1024,   // máx caracteres por doc de imágenes (push completo)
+  _IMG_DOC_LIMIT: 900 * 1024, // umbral seguro por doc al añadir imágenes incrementalmente
 
   // ── Helpers ──────────────────────────────────────────────────────────
   _docId(u) {
@@ -50,6 +51,18 @@ const CloudSync = {
 
   _saveImgIdx() {
     localStorage.setItem('lum_imgIdx', JSON.stringify(this._imgIdx));
+  },
+
+  // Cuántos docs de imágenes (_img0, _img1, …) existen
+  _loadImgDocCount() {
+    const stored = parseInt(localStorage.getItem('lum_imgDocCount') || '0', 10);
+    if (stored > 0) return stored;
+    const maxIdx = Object.values(this._imgIdx).reduce((m, n) => Math.max(m, n), -1);
+    return maxIdx + 1 || 1;
+  },
+
+  _saveImgDocCount(n) {
+    localStorage.setItem('lum_imgDocCount', String(n));
   },
 
   // Extrae imágenes de los productos → { clean, imgMap }
@@ -189,7 +202,8 @@ const CloudSync = {
 
       // Subir SOLO las imágenes que cambiaron
       if (dirtyImages.size > 0) {
-        await this._incrementalImgPush(db, docId, dirtyImages, ts);
+        const newDocCount = await this._incrementalImgPush(db, docId, dirtyImages, ts);
+        if (newDocCount) updates._imgDocCount = newDocCount;
       }
 
       // Actualizar doc principal (update en vez de set → solo toca los campos indicados)
@@ -209,7 +223,10 @@ const CloudSync = {
     }
   },
 
-  // Sube solo las imágenes marcadas como sucias usando dot-notation update
+  // Sube solo las imágenes marcadas como sucias usando dot-notation update.
+  // Es "size-aware": si el doc donde iría una imagen ya está lleno (≥ _IMG_DOC_LIMIT),
+  // la imagen se reubica en otro doc (o se crea uno nuevo). Devuelve el nuevo
+  // _imgDocCount si cambió, o null si sigue igual.
   async _incrementalImgPush(db, docId, dirtyImgIds, ts) {
     this._loadImgIdx();
     const products = (() => {
@@ -218,6 +235,25 @@ const CloudSync = {
     const imgMap = {};
     products.forEach(p => { if (p.image) imgMap[p.id] = p.image; });
 
+    let docCount = this._loadImgDocCount();
+    const initialDocCount = docCount;
+
+    // Tamaño aproximado actual de cada doc según _imgIdx + imágenes locales
+    const docSizes = {};
+    Object.entries(this._imgIdx).forEach(([id, n]) => {
+      if (imgMap[id]) docSizes[n] = (docSizes[n] || 0) + imgMap[id].length;
+    });
+
+    // Busca el primer doc con espacio para `size` bytes más, o crea uno nuevo
+    const findRoom = (size) => {
+      for (let n = 0; n < docCount; n++) {
+        if ((docSizes[n] || 0) + size <= this._IMG_DOC_LIMIT) return n;
+      }
+      const n = docCount++;
+      docSizes[n] = 0;
+      return n;
+    };
+
     // Agrupar cambios por número de doc de imágenes
     const perDoc = {}; // { docN: { 'images.id': value | FieldValue.delete() } }
     const FVdel  = firebase.firestore.FieldValue.delete();
@@ -225,17 +261,39 @@ const CloudSync = {
     dirtyImgIds.forEach(rawId => {
       const isDel = rawId.startsWith('__del__');
       const id    = isDel ? rawId.slice(7) : rawId;
-      const docN  = this._imgIdx[id] !== undefined ? this._imgIdx[id] : 0;
-
-      if (!perDoc[docN]) perDoc[docN] = { syncedAt: ts };
 
       if (isDel) {
+        const docN = this._imgIdx[id];
+        if (docN === undefined) return;
+        if (!perDoc[docN]) perDoc[docN] = { syncedAt: ts };
         perDoc[docN][`images.${id}`] = FVdel;
         delete this._imgIdx[id];
-      } else if (imgMap[id]) {
-        perDoc[docN][`images.${id}`] = imgMap[id];
-        this._imgIdx[id] = docN;
+        return;
       }
+
+      const b64 = imgMap[id];
+      if (!b64) return;
+      const size = b64.length;
+      let docN    = this._imgIdx[id];
+
+      if (docN === undefined) {
+        // Imagen nueva → asignar al primer doc con espacio
+        docN = findRoom(size);
+        docSizes[docN] = (docSizes[docN] || 0) + size;
+        this._imgIdx[id] = docN;
+      } else if ((docSizes[docN] || 0) > this._IMG_DOC_LIMIT) {
+        // El doc donde estaba esta imagen ya está lleno → moverla a otro doc
+        docSizes[docN] = (docSizes[docN] || 0) - size;
+        const oldDocN = docN;
+        docN = findRoom(size);
+        docSizes[docN] = (docSizes[docN] || 0) + size;
+        this._imgIdx[id] = docN;
+        if (!perDoc[oldDocN]) perDoc[oldDocN] = { syncedAt: ts };
+        perDoc[oldDocN][`images.${id}`] = FVdel;
+      }
+
+      if (!perDoc[docN]) perDoc[docN] = { syncedAt: ts };
+      perDoc[docN][`images.${id}`] = b64;
     });
 
     // Aplicar actualizaciones a cada doc de imágenes
@@ -255,6 +313,11 @@ const CloudSync = {
     }));
 
     this._saveImgIdx();
+    if (docCount !== initialDocCount) {
+      this._saveImgDocCount(docCount);
+      return docCount;
+    }
+    return null;
   },
 
   // Push completo (primera vez o cuando update() falla por doc inexistente)
@@ -299,6 +362,7 @@ const CloudSync = {
       // Guardar índice local
       this._imgIdx = newIdx;
       this._saveImgIdx();
+      this._saveImgDocCount(chunks.length);
       this._setStatus('ok');
     } catch (e) {
       console.warn('[CloudSync] Error en push completo:', e && e.message);
@@ -334,6 +398,7 @@ const CloudSync = {
       // Guardar índice de imágenes para futuros pushes incrementales
       this._imgIdx = idx;
       this._saveImgIdx();
+      this._saveImgDocCount(imgDocCount);
 
       this._setStatus('ok');
       return true;
@@ -433,6 +498,9 @@ const CloudSync = {
         }),
         db.collection(this.COLLECTION).doc(`${docId}_img0`).set({ images: {}, syncedAt: ts }),
       ]);
+      this._imgIdx = {};
+      this._saveImgIdx();
+      this._saveImgDocCount(1);
     } catch(e) {
       console.warn('[CloudSync] Error al crear tienda:', e && e.message);
     }
