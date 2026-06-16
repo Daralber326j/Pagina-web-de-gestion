@@ -3845,10 +3845,14 @@ function confirmClearData() {
 // ─── MODAL HELPERS ──────────────────────────
 function openModal(id) {
   document.getElementById(id)?.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
 }
 
 function closeModal(id) {
   document.getElementById(id)?.classList.add('hidden');
+  if (!document.querySelector('.modal-overlay:not(.hidden)')) {
+    document.body.style.overflow = '';
+  }
 }
 
 function closeModalOutside(e, id) {

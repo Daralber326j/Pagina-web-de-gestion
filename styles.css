@@ -2506,6 +2506,7 @@ html[data-fontweight="bold"] button { font-weight: 600; }
   width: min(500px, 100%);
   max-height: 90vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   box-shadow: var(--shadow-lg);
   animation: slideUp 0.25s ease;
 }
