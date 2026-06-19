@@ -34,6 +34,11 @@ const CloudSync = {
   // Se persiste en localStorage como 'lum_imgIdx'
   _imgIdx: {},
 
+  // Cache de imágenes en memoria: productId → base64
+  // Las imágenes NUNCA se guardan en localStorage (límite 5 MB en iOS Safari).
+  // Se llena en pull() y se usa en _stripImages / _incrementalImgPush / renderizado.
+  _imgCache: {},
+
   COLLECTION: 'stores',
   KEYS: ['products','clients','sales','config','users','activityLog','navLabels','trash'],
   _IMG_CHUNK: 700 * 1024,   // máx caracteres por doc de imágenes (push completo)
@@ -66,11 +71,13 @@ const CloudSync = {
   },
 
   // Extrae imágenes de los productos → { clean, imgMap }
+  // Usa _imgCache como respaldo por si el producto no tiene image en localStorage.
   _stripImages(products) {
     const imgMap = {};
     const clean = (products || []).map(p => {
-      if (p.image) {
-        imgMap[p.id] = p.image;
+      const img = p.image || (this._imgCache && this._imgCache[p.id]);
+      if (img) {
+        imgMap[p.id] = img;
         const { image, ...rest } = p;
         return { ...rest, _hasImg: true };
       }
@@ -234,7 +241,10 @@ const CloudSync = {
       try { return JSON.parse(localStorage.getItem('lum_products') || '[]'); } catch { return []; }
     })();
     const imgMap = {};
-    products.forEach(p => { if (p.image) imgMap[p.id] = p.image; });
+    products.forEach(p => {
+      const img = p.image || (this._imgCache && this._imgCache[p.id]);
+      if (img) imgMap[p.id] = img;
+    });
 
     let docCount = this._loadImgDocCount();
     const initialDocCount = docCount;
@@ -395,16 +405,19 @@ const CloudSync = {
         console.warn('[CloudSync] Error leyendo imgs (se usará caché local):', e && e.message);
       }
 
+      // Combinar imágenes del servidor con las locales y guardar en caché de memoria.
+      // Las imágenes NUNCA se escriben en localStorage (evita QuotaExceededError en iOS).
+      const localProds = (() => { try { return JSON.parse(localStorage.getItem('lum_products') || '[]'); } catch { return []; } })();
+      const localImgs  = {};
+      localProds.forEach(p => { if (p.image) localImgs[p.id] = p.image; });
+      this._imgCache = { ...localImgs, ...imgMap }; // imgMap (servidor) tiene prioridad
+
       if (Array.isArray(data.products)) {
-        const localProds = (() => { try { return JSON.parse(localStorage.getItem('lum_products') || '[]'); } catch { return []; } })();
-        const localImgs  = {};
-        localProds.forEach(p => { if (p.image) localImgs[p.id] = p.image; });
-        // Restaurar sin depender de _hasImg — el marcador puede haberse perdido si
-        // productos se subieron a Firestore desde un estado incorrecto (image: null).
+        // Guardar productos SIN imágenes en localStorage (pequeño, sin riesgo de quota).
+        // Las imágenes se sirven desde _imgCache en memoria.
         data.products = data.products.map(p => {
-          const { _hasImg, ...rest } = p;
-          const img = imgMap[p.id] || localImgs[p.id] || null;
-          return img ? { ...rest, image: img } : rest;
+          const { _hasImg, image, ...rest } = p;
+          return rest;
         });
       }
 
@@ -447,13 +460,10 @@ const CloudSync = {
         const data = doc.data();
 
         if (Array.isArray(data.products)) {
-          const localProds = (() => { try { return JSON.parse(localStorage.getItem('lum_products') || '[]'); } catch { return []; } })();
-          const localImgs  = {};
-          localProds.forEach(p => { if (p.image) localImgs[p.id] = p.image; });
+          // Guardar productos sin imágenes en localStorage; imágenes vienen de _imgCache.
           data.products = data.products.map(p => {
-            const { _hasImg, ...rest } = p;
-            const img = localImgs[p.id] || null;
-            return img ? { ...rest, image: img } : rest;
+            const { _hasImg, image, ...rest } = p;
+            return rest;
           });
         }
 

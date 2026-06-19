@@ -1785,9 +1785,10 @@ function openProductModal(prodId = null) {
       document.getElementById('prodPrice').value = p.price || '';
       document.getElementById('prodStock').value = p.stock || 0;
       document.getElementById('prodDesc').value = p.description || '';
-      if (p.image) {
-        productImageB64 = p.image;
-        document.getElementById('prodImagePreview').src = p.image;
+      const _editImg = getImg(p);
+      if (_editImg) {
+        productImageB64 = _editImg;
+        document.getElementById('prodImagePreview').src = _editImg;
         document.getElementById('prodImagePreview').classList.remove('hidden');
         document.getElementById('prodImagePlaceholder').classList.add('hidden');
       }
@@ -1896,6 +1897,11 @@ function deleteProduct(prodId) {
   });
 }
 
+// Devuelve la imagen de un producto: primero desde el objeto, luego desde _imgCache en memoria.
+function getImg(p) {
+  return (p && (p.image || (typeof CloudSync !== 'undefined' && CloudSync._imgCache && CloudSync._imgCache[p.id]))) || null;
+}
+
 async function refreshProductImages() {
   if (typeof CloudSync === 'undefined' || !CloudSync.enabled || !currentUser || currentUser.isAdmin) return;
   const btn = document.getElementById('btnRefreshImages');
@@ -1909,15 +1915,10 @@ async function refreshProductImages() {
     const { imgMap } = await CloudSync._readImgDocs(db, docId, imgDocCount);
     const imgCount = Object.keys(imgMap).length;
     if (!imgCount) { showToast('No se encontraron imágenes en la nube', true); return; }
-    const products = DB.get('products');
-    let restored = 0;
-    const updated = products.map(p => {
-      if (imgMap[p.id]) { restored++; return { ...p, image: imgMap[p.id] }; }
-      return p;
-    });
-    localStorage.setItem('lum_products', JSON.stringify(updated));
+    // Guardar en caché de memoria — NO en localStorage (evita QuotaExceededError en iOS)
+    CloudSync._imgCache = { ...CloudSync._imgCache, ...imgMap };
     renderProducts();
-    showToast(restored + ' imágenes cargadas ✓');
+    showToast(imgCount + ' imágenes disponibles ✓');
   } catch(e) {
     const msg = (e && (e.message || e.code || String(e))) || 'desconocido';
     console.warn('[refreshImages]', msg);
@@ -1953,8 +1954,9 @@ function renderProducts() {
   grid.innerHTML = products.map(p => {
     const stockClass = p.stock === 0 ? 'stock-out' : (p.stock <= lowThr ? 'stock-low' : 'stock-ok');
     const stockLabel = p.stock === 0 ? 'Agotado' : (p.stock <= lowThr ? `⚠ ${p.stock}` : p.stock);
-    const imgEl = p.image
-      ? `<img src="${p.image}" alt="${p.name}" class="product-img" />`
+    const _pImg = getImg(p);
+    const imgEl = _pImg
+      ? `<img src="${_pImg}" alt="${p.name}" class="product-img" />`
       : `<div class="product-img-placeholder">${categoryEmoji(p.category)}</div>`;
     return `
       <div class="product-card" onclick="openProductDetail('${p.id}')">
@@ -1983,8 +1985,9 @@ function openProductDetail(prodId) {
   const profit = totalRevenue - (p.cost * totalSold);
 
   document.getElementById('productDetailTitle').textContent = p.name;
+  const _detailImg = getImg(p);
   document.getElementById('productDetailBody').innerHTML = `
-    ${p.image ? `<img src="${p.image}" alt="${p.name}" class="product-detail-img" />` : ''}
+    ${_detailImg ? `<img src="${_detailImg}" alt="${p.name}" class="product-detail-img" />` : ''}
     <div class="detail-row"><span class="detail-label">Categoría</span><span class="detail-val">${p.category}</span></div>
     <div class="detail-row"><span class="detail-label">Precio venta</span><span class="detail-val">${currency}${fmtN(p.price)}</span></div>
     <div class="detail-row"><span class="detail-label">Precio costo</span><span class="detail-val">${p.cost ? currency + fmtN(p.cost) : '—'}</span></div>
@@ -2189,8 +2192,8 @@ function openClientDetail(clientId) {
     const pct = Math.min(100, Math.round((paid / s.total) * 100));
     const itemsHtml = items.map(item => {
       const prod = products.find(p => p.id === item.productId);
-      const imgEl = (prod && prod.image)
-        ? `<img src="${prod.image}" class="cd-item-img" alt="" />`
+      const imgEl = (prod && getImg(prod))
+        ? `<img src="${getImg(prod)}" class="cd-item-img" alt="" />`
         : `<div class="cd-item-emoji">${categoryEmoji(prod ? prod.category : 'otro')}</div>`;
       // Per-item remaining: use stored amountPaid if available, else proportional fallback
       const itemAmtPaid = typeof item.amountPaid === 'number'
@@ -2605,8 +2608,8 @@ function openPaymentModal(saleId, clientId) {
 
   const itemsHtml = items.map((item, idx) => {
     const prod = products.find(p => p.id === item.productId);
-    const imgEl = (prod && prod.image)
-      ? `<img src="${prod.image}" class="pm-item-img" alt="" />`
+    const imgEl = (prod && getImg(prod))
+      ? `<img src="${getImg(prod)}" class="pm-item-img" alt="" />`
       : `<div class="pm-item-emoji">${categoryEmoji(prod ? prod.category : 'otro')}</div>`;
     // Per-item remaining: use stored amountPaid if available, else proportional fallback
     const itemAmtPaid = typeof item.amountPaid === 'number'
