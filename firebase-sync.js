@@ -386,7 +386,11 @@ const CloudSync = {
       const { imgMap, idx } = await this._readImgDocs(db, docId, imgDocCount);
 
       if (Array.isArray(data.products)) {
-        data.products = this._restoreImages(data.products, imgMap);
+        // Usar imágenes locales como respaldo por si alguna no vino del servidor
+        const localProds = (() => { try { return JSON.parse(localStorage.getItem('lum_products') || '[]'); } catch { return []; } })();
+        const localImgs  = {};
+        localProds.forEach(p => { if (p.image) localImgs[p.id] = p.image; });
+        data.products = this._restoreImages(data.products, imgMap, localImgs);
       }
 
       this.KEYS.forEach(k => {
