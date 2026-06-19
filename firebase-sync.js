@@ -33,7 +33,6 @@ const CloudSync = {
   // Índice local: productId → número de doc de imágenes (0, 1, 2…)
   // Se persiste en localStorage como 'lum_imgIdx'
   _imgIdx: {},
-  _imgIdxReady: false, // true solo cuando _imgIdx fue cargado exitosamente desde el servidor
 
   COLLECTION: 'stores',
   KEYS: ['products','clients','sales','config','users','activityLog','navLabels','trash'],
@@ -67,14 +66,11 @@ const CloudSync = {
   },
 
   // Extrae imágenes de los productos → { clean, imgMap }
-  // Imágenes con URL de Storage (http…) se quedan en el doc principal (son strings cortos).
-  // Solo las base64 legacy se mueven a los docs auxiliares _img*.
   _stripImages(products) {
     const imgMap = {};
     const clean = (products || []).map(p => {
       if (p.image) {
-        if (p.image.startsWith('http')) return p; // URL de Storage → no tocar
-        imgMap[p.id] = p.image;                   // base64 legacy → mover a img doc
+        imgMap[p.id] = p.image;
         const { image, ...rest } = p;
         return { ...rest, _hasImg: true };
       }
@@ -143,11 +139,7 @@ const CloudSync = {
     (newProds || []).forEach(p => {
       const oldImg = oldMap[p.id] !== undefined ? oldMap[p.id] : '__new__';
       if ((p.image || null) !== oldImg || oldImg === '__new__') {
-        // Las imágenes URL de Storage se sincronizan con el doc principal (dirtyKeys),
-        // no necesitan un doc auxiliar _img*.
-        if (!p.image || !p.image.startsWith('http')) {
-          this._dirtyImgIds.add(p.id);
-        }
+        this._dirtyImgIds.add(p.id);
       }
       delete oldMap[p.id];
     });
@@ -166,7 +158,6 @@ const CloudSync = {
     this.stopListener();
     this._dirtyKeys.clear();
     this._dirtyImgIds.clear();
-    this._imgIdxReady = false;
   },
 
   // ── PUSH incremental ─────────────────────────────────────────────────
@@ -211,15 +202,8 @@ const CloudSync = {
 
       // Subir SOLO las imágenes que cambiaron
       if (dirtyImages.size > 0) {
-        if (!this._imgIdxReady) {
-          // Los docs de imágenes no se cargaron en el último pull (conexión lenta en móvil).
-          // No tocar los docs del servidor para no sobreescribir con datos incompletos.
-          // Re-marcar como sucios; se subirán cuando el pull de imágenes tenga éxito.
-          dirtyImages.forEach(id => this._dirtyImgIds.add(id));
-        } else {
-          const newDocCount = await this._incrementalImgPush(db, docId, dirtyImages, ts);
-          if (newDocCount) updates._imgDocCount = newDocCount;
-        }
+        const newDocCount = await this._incrementalImgPush(db, docId, dirtyImages, ts);
+        if (newDocCount) updates._imgDocCount = newDocCount;
       }
 
       // Actualizar doc principal (update en vez de set → solo toca los campos indicados)
@@ -379,7 +363,6 @@ const CloudSync = {
       this._imgIdx = newIdx;
       this._saveImgIdx();
       this._saveImgDocCount(chunks.length);
-      this._imgIdxReady = true;
       this._setStatus('ok');
     } catch (e) {
       console.warn('[CloudSync] Error en push completo:', e && e.message);
@@ -388,10 +371,6 @@ const CloudSync = {
   },
 
   // ── PULL (nube → local) ──────────────────────────────────────────────
-  // Estrategia de dos fases:
-  //   1) Descarga el doc principal (pequeño) → guarda datos y permite login
-  //   2) Descarga los docs de imágenes (pueden ser grandes) → si falla, usa
-  //      caché local para no romper el login ni perder imágenes ya cargadas
   async pull(username) {
     if (!this.enabled || !username) return false;
     try {
@@ -399,62 +378,27 @@ const CloudSync = {
       const db    = firebase.firestore();
       const docId = this._docId(username);
 
-      // ── Fase 1: doc principal (usuarios, productos sin foto, etc.) ──────
       const mainSnap = await db.collection(this.COLLECTION).doc(docId).get();
       if (!mainSnap.exists) { this._setStatus(''); return false; }
 
       const data        = mainSnap.data();
       const imgDocCount = data._imgDocCount || 1;
-      this._saveImgDocCount(imgDocCount);
-
-      // Imagen local existente → usarla de respaldo mientras llegan las del servidor
-      const localProds = (() => {
-        try { return JSON.parse(localStorage.getItem('lum_products') || '[]'); } catch { return []; }
-      })();
-      const localImgs = {};
-      localProds.forEach(p => { if (p.image) localImgs[p.id] = p.image; });
+      const { imgMap, idx } = await this._readImgDocs(db, docId, imgDocCount);
 
       if (Array.isArray(data.products)) {
-        // Restaurar con imágenes locales como fallback (sin bloquear el login)
-        data.products = this._restoreImages(data.products, {}, localImgs);
+        data.products = this._restoreImages(data.products, imgMap);
       }
 
-      // Guardar TODOS los datos principales ANTES de intentar las imágenes
-      // → el login siempre funciona aunque las imágenes fallen
       this.KEYS.forEach(k => {
         if (data[k] !== undefined) {
           localStorage.setItem('lum_' + k, JSON.stringify(data[k]));
         }
       });
 
-      // ── Fase 2: docs de imágenes (pueden ser lentos / fallar en móvil) ──
-      try {
-        const { imgMap, idx } = await this._readImgDocs(db, docId, imgDocCount);
-
-        // Reemplazar las imágenes locales con las del servidor
-        if (Object.keys(imgMap).length > 0) {
-          const prodsActuales = (() => {
-            try { return JSON.parse(localStorage.getItem('lum_products') || '[]'); } catch { return []; }
-          })();
-          const prodsConImg = this._restoreImages(
-            prodsActuales.map(p => p.image ? p : { ...p, _hasImg: !!localImgs[p.id] }),
-            imgMap,
-            localImgs
-          );
-          localStorage.setItem('lum_products', JSON.stringify(prodsConImg));
-        }
-
-        this._imgIdx = idx;
-        this._saveImgIdx();
-        this._imgIdxReady = true;
-      } catch (imgErr) {
-        // Las imágenes no se pudieron descargar (conexión lenta, datos móviles, etc.)
-        // Se mantiene la caché local de imágenes; el _imgIdx existente no se sobreescribe
-        console.warn('[CloudSync] Imágenes no cargadas (se usa caché local):', imgErr && imgErr.message);
-        this._loadImgIdx();
-        // Si no tenemos índice local, marcar para rechunking en el próximo push completo
-        this._imgIdxReady = Object.keys(this._imgIdx).length > 0;
-      }
+      // Guardar índice de imágenes para futuros pushes incrementales
+      this._imgIdx = idx;
+      this._saveImgIdx();
+      this._saveImgDocCount(imgDocCount);
 
       this._setStatus('ok');
       return true;
