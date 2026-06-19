@@ -30,6 +30,7 @@ let currentUser = null;
 let editingProductId = null;
 let editingClientId = null;
 let productImageB64 = null;
+let _uploadingImage  = false;   // true mientras la foto se está subiendo a Storage
 let saleCart = [];
 
 let _logFilter = '';
@@ -1812,6 +1813,15 @@ function _compressImage(dataUrl, maxPx, quality, cb) {
   img.src = dataUrl;
 }
 
+function _dataUrlToBlob(dataUrl) {
+  const [head, b64] = dataUrl.split(',');
+  const mime = head.match(/:(.*?);/)[1];
+  const bytes = atob(b64);
+  const arr   = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
 function handleProductImage(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -1823,17 +1833,40 @@ function handleProductImage(e) {
   const reader = new FileReader();
   reader.onload = ev => {
     _compressImage(ev.target.result, 400, 0.75, compressed => {
-      productImageB64 = compressed;
-      const img = document.getElementById('prodImagePreview');
-      img.src = productImageB64;
-      img.classList.remove('hidden');
+      // Mostrar preview local inmediatamente
+      const imgEl = document.getElementById('prodImagePreview');
+      imgEl.src = compressed;
+      imgEl.classList.remove('hidden');
       document.getElementById('prodImagePlaceholder').classList.add('hidden');
+      productImageB64 = compressed; // fallback local mientras sube
+
+      // Subir a Firebase Storage si está disponible
+      const storageReady = typeof firebase !== 'undefined' && firebase.apps.length &&
+                           typeof firebase.storage === 'function';
+      if (storageReady) {
+        _uploadingImage = true;
+        const path = `products/${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        firebase.storage().ref(path).put(_dataUrlToBlob(compressed))
+          .then(snap => snap.ref.getDownloadURL())
+          .then(url => {
+            productImageB64 = url;  // reemplazar base64 con URL de Storage
+            imgEl.src = url;
+            _uploadingImage = false;
+          })
+          .catch(err => {
+            // Si Storage falla, queda la base64 comprimida como respaldo
+            console.warn('[Storage] Error al subir imagen:', err.message);
+            _uploadingImage = false;
+          });
+      }
     });
   };
   reader.readAsDataURL(file);
 }
 
 function saveProduct() {
+  if (_uploadingImage) { showToast('Espera, la imagen aún se está subiendo…', true); return; }
+
   const name = document.getElementById('prodName').value.trim();
   const price = parseFloat(document.getElementById('prodPrice').value);
   const stock = parseInt(document.getElementById('prodStock').value);

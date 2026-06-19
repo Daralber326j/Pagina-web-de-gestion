@@ -67,11 +67,14 @@ const CloudSync = {
   },
 
   // Extrae imágenes de los productos → { clean, imgMap }
+  // Imágenes con URL de Storage (http…) se quedan en el doc principal (son strings cortos).
+  // Solo las base64 legacy se mueven a los docs auxiliares _img*.
   _stripImages(products) {
     const imgMap = {};
     const clean = (products || []).map(p => {
       if (p.image) {
-        imgMap[p.id] = p.image;
+        if (p.image.startsWith('http')) return p; // URL de Storage → no tocar
+        imgMap[p.id] = p.image;                   // base64 legacy → mover a img doc
         const { image, ...rest } = p;
         return { ...rest, _hasImg: true };
       }
@@ -140,7 +143,11 @@ const CloudSync = {
     (newProds || []).forEach(p => {
       const oldImg = oldMap[p.id] !== undefined ? oldMap[p.id] : '__new__';
       if ((p.image || null) !== oldImg || oldImg === '__new__') {
-        this._dirtyImgIds.add(p.id);
+        // Las imágenes URL de Storage se sincronizan con el doc principal (dirtyKeys),
+        // no necesitan un doc auxiliar _img*.
+        if (!p.image || !p.image.startsWith('http')) {
+          this._dirtyImgIds.add(p.id);
+        }
       }
       delete oldMap[p.id];
     });
