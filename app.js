@@ -1919,13 +1919,11 @@ async function refreshProductImages() {
     renderProducts();
     showToast(restored + ' imágenes cargadas ✓');
   } catch(e) {
-    console.warn('[refreshImages]', e);
+    const msg = (e && (e.message || e.code || String(e))) || 'desconocido';
+    console.warn('[refreshImages]', msg);
     const errEl = document.getElementById('imgLoadError');
-    if (errEl) {
-      errEl.textContent = 'ERROR: ' + (e && (e.message || e.code || JSON.stringify(e)));
-      errEl.style.display = 'block';
-    }
-    showToast('Error al cargar imágenes', true);
+    if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
+    alert('Error al cargar imágenes:\n\n' + msg);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '↻ Fotos'; }
   }
