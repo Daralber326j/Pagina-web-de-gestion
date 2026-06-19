@@ -1920,6 +1920,11 @@ async function refreshProductImages() {
     showToast(restored + ' imágenes cargadas ✓');
   } catch(e) {
     console.warn('[refreshImages]', e);
+    const errEl = document.getElementById('imgLoadError');
+    if (errEl) {
+      errEl.textContent = 'ERROR: ' + (e && (e.message || e.code || JSON.stringify(e)));
+      errEl.style.display = 'block';
+    }
     showToast('Error al cargar imágenes', true);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '↻ Fotos'; }
