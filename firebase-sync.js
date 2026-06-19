@@ -106,17 +106,18 @@ const CloudSync = {
   },
 
   // Lee todos los docs de imágenes y devuelve { imgMap, idx }
+  // Usa allSettled para que un doc lento o denegado no rompa los demás.
   async _readImgDocs(db, docId, count) {
     if (!count || count < 1) count = 1;
-    const snaps = await Promise.all(
+    const results = await Promise.allSettled(
       Array.from({ length: count }, (_, i) =>
         db.collection(this.COLLECTION).doc(`${docId}_img${i}`).get()
       )
     );
     const imgMap = {}, idx = {};
-    snaps.forEach((s, i) => {
-      if (s.exists) {
-        Object.entries(s.data().images || {}).forEach(([id, b64]) => {
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled' && r.value.exists) {
+        Object.entries(r.value.data().images || {}).forEach(([id, b64]) => {
           imgMap[id] = b64;
           idx[id] = i;
         });
@@ -383,7 +384,16 @@ const CloudSync = {
 
       const data        = mainSnap.data();
       const imgDocCount = data._imgDocCount || 1;
-      const { imgMap, idx } = await this._readImgDocs(db, docId, imgDocCount);
+
+      // Leer img docs de forma tolerante: si alguno falla (lentitud, red) se ignora.
+      // allSettled dentro de _readImgDocs ya maneja fallos individuales; aquí capturamos
+      // cualquier otro error inesperado para que pull() siempre termine.
+      let imgMap = {}, idx = {};
+      try {
+        ({ imgMap, idx } = await this._readImgDocs(db, docId, imgDocCount));
+      } catch (e) {
+        console.warn('[CloudSync] Error leyendo imgs (se usará caché local):', e && e.message);
+      }
 
       if (Array.isArray(data.products)) {
         const localProds = (() => { try { return JSON.parse(localStorage.getItem('lum_products') || '[]'); } catch { return []; } })();
@@ -404,10 +414,12 @@ const CloudSync = {
         }
       });
 
-      // Guardar índice de imágenes para futuros pushes incrementales
-      this._imgIdx = idx;
-      this._saveImgIdx();
-      this._saveImgDocCount(imgDocCount);
+      // Guardar índice solo si se pudo leer al menos un doc de imágenes
+      if (Object.keys(idx).length > 0) {
+        this._imgIdx = idx;
+        this._saveImgIdx();
+        this._saveImgDocCount(imgDocCount);
+      }
 
       this._setStatus('ok');
       return true;
