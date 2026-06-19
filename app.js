@@ -1896,6 +1896,36 @@ function deleteProduct(prodId) {
   });
 }
 
+async function refreshProductImages() {
+  if (typeof CloudSync === 'undefined' || !CloudSync.enabled || !currentUser || currentUser.isAdmin) return;
+  const btn = document.getElementById('btnRefreshImages');
+  if (btn) { btn.disabled = true; btn.textContent = '↻ Cargando…'; }
+  try {
+    const db = firebase.firestore();
+    const docId = CloudSync._docId(currentUser.username);
+    const mainSnap = await db.collection('stores').doc(docId).get();
+    if (!mainSnap.exists) return;
+    const imgDocCount = mainSnap.data()._imgDocCount || 1;
+    const { imgMap } = await CloudSync._readImgDocs(db, docId, imgDocCount);
+    const imgCount = Object.keys(imgMap).length;
+    if (!imgCount) { showToast('No se encontraron imágenes en la nube', true); return; }
+    const products = DB.get('products');
+    let restored = 0;
+    const updated = products.map(p => {
+      if (imgMap[p.id]) { restored++; return { ...p, image: imgMap[p.id] }; }
+      return p;
+    });
+    localStorage.setItem('lum_products', JSON.stringify(updated));
+    renderProducts();
+    showToast(restored + ' imágenes cargadas ✓');
+  } catch(e) {
+    console.warn('[refreshImages]', e);
+    showToast('Error al cargar imágenes', true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Fotos'; }
+  }
+}
+
 function renderProducts() {
   const grid = document.getElementById('productsGrid');
   if (!grid) return;
