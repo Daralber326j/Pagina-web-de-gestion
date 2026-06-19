@@ -386,11 +386,16 @@ const CloudSync = {
       const { imgMap, idx } = await this._readImgDocs(db, docId, imgDocCount);
 
       if (Array.isArray(data.products)) {
-        // Usar imágenes locales como respaldo por si alguna no vino del servidor
         const localProds = (() => { try { return JSON.parse(localStorage.getItem('lum_products') || '[]'); } catch { return []; } })();
         const localImgs  = {};
         localProds.forEach(p => { if (p.image) localImgs[p.id] = p.image; });
-        data.products = this._restoreImages(data.products, imgMap, localImgs);
+        // Restaurar sin depender de _hasImg — el marcador puede haberse perdido si
+        // productos se subieron a Firestore desde un estado incorrecto (image: null).
+        data.products = data.products.map(p => {
+          const { _hasImg, ...rest } = p;
+          const img = imgMap[p.id] || localImgs[p.id] || null;
+          return img ? { ...rest, image: img } : rest;
+        });
       }
 
       this.KEYS.forEach(k => {
@@ -433,7 +438,11 @@ const CloudSync = {
           const localProds = (() => { try { return JSON.parse(localStorage.getItem('lum_products') || '[]'); } catch { return []; } })();
           const localImgs  = {};
           localProds.forEach(p => { if (p.image) localImgs[p.id] = p.image; });
-          data.products = this._restoreImages(data.products, {}, localImgs);
+          data.products = data.products.map(p => {
+            const { _hasImg, ...rest } = p;
+            const img = localImgs[p.id] || null;
+            return img ? { ...rest, image: img } : rest;
+          });
         }
 
         let changed = false;
