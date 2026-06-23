@@ -1773,6 +1773,7 @@ function openProductModal(prodId = null) {
   document.getElementById('prodImagePreview').classList.add('hidden');
   document.getElementById('prodImagePreview').src = '';
   document.getElementById('prodImagePlaceholder').classList.remove('hidden');
+  document.getElementById('prodImageInput').value = '';
 
   if (prodId) {
     title.textContent = 'Editar Producto';
